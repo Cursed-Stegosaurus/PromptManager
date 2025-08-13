@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "1.0.0",
+  "prompts": [
+    {
+      "id": "seed-sales-followup",
+      "title": "Sales Follow-Up Email",
+      "body": "Hi {{name}},\n\nJust checking in on our last conversation about {{product}}. Do you have any questions or need more details?\n\nBest regards,\n{{sender}}",
+      "tags": ["sales", "email"],
+      "favorite": false,
+      "hidden": false,
+      "source": "seed",
+      "version": 1,
+      "createdAt": "2025-08-13T00:00:00.000Z",
+      "updatedAt": "2025-08-13T00:00:00.000Z"
+    },
+    {
+      "id": "seed-finance-invoice-reminder",
+      "title": "Invoice Payment Reminder",
+      "body": "Hello {{name}},\n\nThis is a friendly reminder that invoice #{{invoice_number}} for {{amount}} is due on {{due_date}}.\n\nThank you,\n{{sender}}",
+      "tags": ["finance", "invoice"],
+      "favorite": false,
+      "hidden": false,
+      "source": "seed",
+      "version": 1,
+      "createdAt": "2025-08-13T00:00:00.000Z",
+      "updatedAt": "2025-08-13T00:00:00.000Z"
+    },
+    {
+      "id": "seed-engineering-bug-report",
+      "title": "Engineering Bug Report Template",
+      "body": "Title: {{bug_title}}\n\nSteps to reproduce:\n1. \n2. \n3. \n\nExpected result:\n\nActual result:\n\nEnvironment:\n- OS: \n- Browser/Version: \n- Additional info: ",
+      "tags": ["engineering", "bug"],
+      "favorite": false,
+      "hidden": false,
+      "source": "seed",
+      "version": 1,
+      "createdAt": "2025-08-13T00:00:00.000Z",
+      "updatedAt": "2025-08-13T00:00:00.000Z"
+    },
+    {
+      "id": "seed-ops-meeting-agenda",
+      "title": "Operations Meeting Agenda",
+      "body": "Meeting date: {{date}}\n\nAgenda:\n1. Review action items from last meeting\n2. Current project updates\n3. Challenges and blockers\n4. Next steps and assignments",
+      "tags": ["operations", "meeting"],
+      "favorite": false,
+      "hidden": false,
+      "source": "seed",
+      "version": 1,
+      "createdAt": "2025-08-13T00:00:00.000Z",
+      "updatedAt": "2025-08-13T00:00:00.000Z"
+    }
+  ]
+}

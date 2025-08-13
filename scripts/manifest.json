@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "Prompt Library",
+  "version": "1.0.0",
+  "description": "Find, clone, and insert reusable prompts. Optional Google Drive backup.",
+  "permissions": [
+    "storage",
+    "sidePanel",
+    "scripting",
+    "activeTab",
+    "contextMenus",
+    "clipboardWrite",
+    "identity"
+  ],
+  "oauth2": {
+    "client_id": "__REPLACE_WITH_OAUTH_CLIENT_ID__",
+    "scopes": [
+      "https://www.googleapis.com/auth/drive.appdata"
+    ]
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": { "default_path": "sidepanel/index.html" },
+  "options_page": "options/options.html",
+  "action": { "default_title": "Prompt Library" },
+  "icons": {
+    "16": "assets/icons/16.png",
+    "32": "assets/icons/32.png",
+    "48": "assets/icons/48.png",
+    "128": "assets/icons/128.png"
+  },
+  "commands": {
+    "open_side_panel": {
+      "suggested_key": { "default": "Alt+P" },
+      "description": "Open side panel"
+    },
+    "insert_last_prompt": {
+      "suggested_key": { "default": "Alt+I" },
+      "description": "Insert last prompt"
+    }
+  }
+}

@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'; connect-src 'self' https://www.googleapis.com;">
+  <title>Prompt Library</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <input id="search" placeholder="Search... tag:sales fav:true hidden:true bin:true" />
+    <button id="btn-insert">Insert</button>
+    <button id="btn-copy">Copy</button>
+  </header>
+  <main>
+    <aside id="list"></aside>
+    <section id="detail">
+      <h1 id="title"></h1>
+      <textarea id="body" rows="12"></textarea>
+      <div id="vars"></div>
+      <div class="row">
+        <button id="btn-fav">Favorite</button>
+        <button id="btn-hide">Hide</button>
+        <button id="btn-clone">Clone</button>
+        <button id="btn-delete">Delete</button>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="encryptToggle" /> Encrypt my library</label>
+      </div>
+    </section>
+  </main>
+  <footer id="toast" hidden></footer>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
