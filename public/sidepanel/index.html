@@ -9,9 +9,42 @@
 <body>
   <header>
     <input id="search" placeholder="Search... tag:sales fav:true hidden:true bin:true" />
-    <button id="btn-insert">Insert</button>
-    <button id="btn-copy">Copy</button>
+    <button id="btn-insert">Insert (Alt+P)</button>
+    <button id="btn-copy">Copy (Alt+I)</button>
   </header>
+  
+  <div id="filter-controls" class="filter-controls">
+    <div class="filter-row">
+      <label><input type="checkbox" id="show-hidden" /> Show Hidden</label>
+      <label><input type="checkbox" id="show-bin" /> Show Bin</label>
+    </div>
+    <div class="filter-row">
+      <select id="sort-by">
+        <option value="relevance">Sort by Relevance</option>
+        <option value="title">Sort by Title</option>
+        <option value="favorite">Sort by Favorite</option>
+        <option value="updatedAt">Sort by Updated</option>
+        <option value="createdAt">Sort by Created</option>
+      </select>
+      <button id="sort-order" title="Toggle sort order">↓</button>
+    </div>
+    <div class="filter-row">
+      <button id="btn-multi-select" class="btn btn-secondary">Multi-Select</button>
+      <button id="btn-select-all" class="btn btn-secondary" style="display: none;">Select All</button>
+    </div>
+  </div>
+  
+  <div id="bulk-actions" class="bulk-actions" style="display: none;">
+    <div class="bulk-actions-header">
+      <span id="bulk-selection-count">0 items selected</span>
+    </div>
+    <div class="bulk-actions-buttons">
+      <button id="btn-bulk-favorite" class="btn btn-primary" disabled>Toggle Favorite</button>
+      <button id="btn-bulk-hide" class="btn btn-warning" disabled>Toggle Hide</button>
+      <button id="btn-bulk-delete" class="btn btn-danger" disabled>Move to Bin</button>
+    </div>
+  </div>
+  
   <main>
     <aside id="list"></aside>
     <section id="detail">

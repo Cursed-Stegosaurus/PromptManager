@@ -7,31 +7,62 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="header">
-    <div class="search-bar">
-      <input id="search" class="search-input" placeholder="Search" />
-      <button id="btn-clear-search" class="search-clear hidden" aria-label="Clear search">×</button>
-    </div>
-    <div class="header-actions">
-      <button id="btn-insert">Insert</button>
-      <button id="btn-copy">Copy</button>
-    </div>
+  <header>
+    <input id="search" placeholder="Search... tag:sales fav:true hidden:true bin:true" />
+    <button id="btn-insert">Insert (Alt+P)</button>
+    <button id="btn-copy">Copy (Alt+I)</button>
   </header>
-  <main class="content">
-    <section id="editor">
-      <input id="title" placeholder="Title" />
-      <textarea id="body" rows="10" placeholder="Write your prompt here..."></textarea>
-      <div class="row editor-actions">
-        <button id="btn-new">New</button>
+  
+  <div id="filter-controls" class="filter-controls">
+    <div class="filter-row">
+      <label><input type="checkbox" id="show-hidden" /> Show Hidden</label>
+      <label><input type="checkbox" id="show-bin" /> Show Bin</label>
+    </div>
+    <div class="filter-row">
+      <select id="sort-by">
+        <option value="relevance">Sort by Relevance</option>
+        <option value="title">Sort by Title</option>
+        <option value="favorite">Sort by Favorite</option>
+        <option value="updatedAt">Sort by Updated</option>
+        <option value="createdAt">Sort by Created</option>
+      </select>
+      <button id="sort-order" title="Toggle sort order">↓</button>
+    </div>
+    <div class="filter-row">
+      <button id="btn-multi-select" class="btn btn-secondary">Multi-Select</button>
+      <button id="btn-select-all" class="btn btn-secondary" style="display: none;">Select All</button>
+    </div>
+  </div>
+  
+  <div id="bulk-actions" class="bulk-actions" style="display: none;">
+    <div class="bulk-actions-header">
+      <span id="bulk-selection-count">0 items selected</span>
+    </div>
+    <div class="bulk-actions-buttons">
+      <button id="btn-bulk-favorite" class="btn btn-primary" disabled>Toggle Favorite</button>
+      <button id="btn-bulk-hide" class="btn btn-warning" disabled>Toggle Hide</button>
+      <button id="btn-bulk-delete" class="btn btn-danger" disabled>Move to Bin</button>
+    </div>
+  </div>
+  
+  <main>
+    <aside id="list"></aside>
+    <section id="detail">
+      <h1 id="title"></h1>
+      <textarea id="body" rows="12"></textarea>
+      <div id="vars"></div>
+      <div class="row">
+        <button id="btn-fav">Favorite</button>
+        <button id="btn-hide">Hide</button>
         <button id="btn-clone">Clone</button>
-        <button id="btn-save">Save</button>
-        <button id="btn-import">Import</button>
-        <input type="file" id="panelImportInput" accept="application/json" class="hidden" />
+        <button id="btn-delete">Delete</button>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="encryptToggle" /> Encrypt my library</label>
       </div>
     </section>
-    <aside id="list" class="prompt-list"></aside>
   </main>
-  <div id="notifications" class="notifications-overlay"></div>
+  <footer id="toast" hidden></footer>
   <script type="module" src="main.js"></script>
 </body>
 </html>

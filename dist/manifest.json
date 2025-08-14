@@ -9,22 +9,10 @@
     "scripting",
     "activeTab",
     "contextMenus",
-    "clipboardWrite",
-    "alarms",
-    "identity",
-    "tabs"
+    "clipboardWrite"
   ],
-  "host_permissions": [
-    "https://www.googleapis.com/*"
-  ],
-  "oauth2": {
-    "client_id": "YOUR_OAUTH_CLIENT_ID.apps.googleusercontent.com",
-    "scopes": [
-      "https://www.googleapis.com/auth/drive.appdata"
-    ]
-  },
   "background": {
-    "service_worker": "background-enhanced.js"
+    "service_worker": "background.js"
   },
   "side_panel": {
     "default_path": "sidepanel/index.html"
@@ -32,12 +20,6 @@
   "options_page": "options/options.html",
   "action": {
     "default_title": "Prompt Library"
-  },
-  "commands": {
-    "insert-last": {
-      "suggested_key": { "default": "Alt+I" },
-      "description": "Insert last prompt"
-    }
   },
   "icons": {
     "16": "assets/icons/16.png",
