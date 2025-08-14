@@ -1,209 +1,179 @@
-// Enhanced search worker with fuzzy search, relevance scoring, and advanced filtering
-interface Item { 
-  id: string; 
-  title: string; 
-  body: string; 
-  tags: string[]; 
-  favorite?: boolean; 
-  hidden?: boolean; 
-  deletedAt?: string;
-  category?: string;
-  createdAt?: string;
-  updatedAt?: string;
-}
-
-interface Query { 
-  q: string; 
-  showHidden: boolean; 
+// Search worker for smooth performance with large prompt lists
+interface SearchQuery {
+  q: string;
+  showHidden: boolean;
   includeBin: boolean;
-  sortBy?: 'relevance' | 'title' | 'createdAt' | 'updatedAt' | 'favorite';
-  sortOrder?: 'asc' | 'desc';
+  sortBy: 'relevance' | 'title' | 'createdAt' | 'updatedAt' | 'favorite';
+  sortOrder: 'asc' | 'desc';
 }
 
 interface SearchResult {
-  item: Item;
-  score: number;
-  matches: string[];
+  id: string;
+  title: string;
+  body: string;
+  tags: string[];
+  favorite: boolean;
+  hidden: boolean;
+  deletedAt?: string;
+  source: string;
+  relevance: number;
 }
 
-self.onmessage = (e: MessageEvent) => {
-  const { items, query } = e.data as { items: Item[]; query: Query };
-  const res = search(items, query);
-  (self as unknown as Worker).postMessage(res);
-};
+// Light filter logic with tag:, fav:true, hidden:true, bin:true support
+function parseQuery(query: string): { text: string; tags: string[]; filters: Record<string, boolean> } {
+  const filters: Record<string, boolean> = {};
+  const tags: string[] = [];
+  let text = query;
 
-function search(items: Item[], q: Query): Item[] {
-  const { tokens, filters, exactMatches } = parse(q.q);
-  
-  // Apply filters first
-  let filtered = items.filter(it => {
-    if (!q.includeBin && it.deletedAt) return false;
-    if (!q.showHidden && it.hidden) return false;
-    if (filters.fav === true && !it.favorite) return false;
-    if (filters.hidden === true && !it.hidden) return false;
-    if (filters.bin === true && !it.deletedAt) return false;
-    if (filters.category && it.category !== filters.category) return false;
-    if (filters.date && it.updatedAt) {
-      const itemDate = new Date(it.updatedAt);
-      const filterDate = new Date(filters.date);
-      if (itemDate < filterDate) return false;
+  // Extract tag filters
+  const tagMatches = query.match(/tag:(\S+)/g);
+  if (tagMatches) {
+    tagMatches.forEach(match => {
+      const tag = match.replace('tag:', '');
+      tags.push(tag);
+      text = text.replace(match, '').trim();
+    });
+  }
+
+  // Extract boolean filters
+  const booleanFilters = ['fav:true', 'hidden:true', 'bin:true'];
+  booleanFilters.forEach(filter => {
+    if (query.includes(filter)) {
+      const key = filter.split(':')[0];
+      filters[key] = true;
+      text = text.replace(filter, '').trim();
     }
+  });
+
+  return { text, tags, filters };
+}
+
+function calculateRelevance(prompt: any, query: string, tags: string[]): number {
+  let score = 0;
+  const queryLower = query.toLowerCase();
+  
+  // Title match (highest weight)
+  if (prompt.title?.toLowerCase().includes(queryLower)) {
+    score += 100;
+  }
+  
+  // Body match
+  if (prompt.body?.toLowerCase().includes(queryLower)) {
+    score += 50;
+  }
+  
+  // Tag matches
+  if (tags.length > 0) {
+    const promptTags = prompt.tags || [];
+    tags.forEach(tag => {
+      if (promptTags.some((pt: string) => pt.toLowerCase().includes(tag.toLowerCase()))) {
+        score += 75;
+      }
+    });
+  }
+  
+  // Favorite bonus (only if there's already a match)
+  if (prompt.favorite && score > 0) {
+    score += 10;
+  }
+  
+  return score;
+}
+
+function filterPrompts(prompts: any[], query: SearchQuery): SearchResult[] {
+  const { text, tags, filters } = parseQuery(query.q);
+  
+  let filtered = prompts.filter(prompt => {
+    // Apply filters
+    if (filters.fav && !prompt.favorite) return false;
+    if (filters.hidden && !prompt.hidden) return false;
+    if (filters.bin && !prompt.deletedAt) return false;
+    
+    // Apply visibility filters
+    if (!query.showHidden && prompt.hidden) return false;
+    if (!query.includeBin && prompt.deletedAt) return false;
+    
+    // Apply text search
+    if (text) {
+      const relevance = calculateRelevance(prompt, text, tags);
+      if (relevance === 0) return false;
+      prompt.relevance = relevance;
+    }
+    
     return true;
   });
-
-  if (tokens.length === 0 && Object.keys(filters).length === 0) {
-    return sortResults(filtered.map(item => ({ item, score: 0, matches: [] })), q.sortBy, q.sortOrder);
-  }
-
-  // Perform search with scoring
-  const results: SearchResult[] = filtered.map(item => {
-    const { score, matches } = calculateScore(item, tokens, exactMatches);
-    return { item, score, matches };
-  }).filter(result => result.score > 0);
-
-  // Sort by relevance score
-  const sorted = sortResults(results, q.sortBy, q.sortOrder);
   
-  return sorted.map(result => result.item);
+  // Sort results with favorites always first
+  if (query.sortBy === 'relevance' && text) {
+    filtered.sort((a, b) => {
+      // Favorites come first
+      if (a.favorite && !b.favorite) return -1;
+      if (!a.favorite && b.favorite) return 1;
+      // Within the same favorite status, sort by relevance
+      return (b.relevance || 0) - (a.relevance || 0);
+    });
+  } else if (query.sortBy === 'title') {
+    filtered.sort((a, b) => {
+      // Favorites come first
+      if (a.favorite && !b.favorite) return -1;
+      if (!a.favorite && b.favorite) return 1;
+      // Within the same favorite status, sort by title
+      return a.title.localeCompare(b.title);
+    });
+  } else if (query.sortBy === 'createdAt') {
+    filtered.sort((a, b) => {
+      // Favorites come first
+      if (a.favorite && !b.favorite) return -1;
+      if (!a.favorite && b.favorite) return 1;
+      // Within the same favorite status, sort by created date
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+  } else if (query.sortBy === 'updatedAt') {
+    filtered.sort((a, b) => {
+      // Favorites come first
+      if (a.favorite && !b.favorite) return -1;
+      if (!a.favorite && b.favorite) return 1;
+      // Within the same favorite status, sort by updated date
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    });
+  } else if (query.sortBy === 'favorite') {
+    filtered.sort((a, b) => (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0));
+  } else {
+    // Default sorting: favorites first, then by updated date
+    filtered.sort((a, b) => {
+      // Favorites come first
+      if (a.favorite && !b.favorite) return -1;
+      if (!a.favorite && b.favorite) return 1;
+      // Within the same favorite status, sort by updated date
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    });
+  }
+  
+  if (query.sortOrder === 'asc') {
+    filtered.reverse();
+  }
+  
+  return filtered.map(p => ({
+    id: p.id,
+    title: p.title,
+    body: p.body,
+    tags: p.tags || [],
+    favorite: p.favorite,
+    hidden: p.hidden,
+    deletedAt: p.deletedAt,
+    source: p.source,
+    relevance: p.relevance || 0
+  }));
 }
 
-function calculateScore(item: Item, tokens: string[], exactMatches: string[]): { score: number; matches: string[] } {
-  let score = 0;
-  const matches: string[] = [];
-  const searchableText = `${item.title} ${item.tags.join(" ")} ${item.body}`.toLowerCase();
+// Worker message handler
+self.onmessage = (e: MessageEvent) => {
+  const { prompts, query } = e.data;
   
-  for (const token of tokens) {
-    let tokenScore = 0;
-    let found = false;
-    
-    // Exact matches get highest score
-    if (exactMatches.includes(token)) {
-      if (item.title.toLowerCase().includes(token)) {
-        tokenScore += 100;
-        found = true;
-      }
-      if (item.tags.some(tag => tag.toLowerCase().includes(token))) {
-        tokenScore += 80;
-        found = true;
-      }
-      if (item.body.toLowerCase().includes(token)) {
-        tokenScore += 60;
-        found = true;
-      }
-    } else {
-      // Fuzzy matching with different weights
-      if (item.title.toLowerCase().includes(token)) {
-        tokenScore += 50;
-        found = true;
-      }
-      if (item.tags.some(tag => tag.toLowerCase().includes(token))) {
-        tokenScore += 40;
-        found = true;
-      }
-      if (item.body.toLowerCase().includes(token)) {
-        tokenScore += 20;
-        found = true;
-      }
-      
-      // Partial word matching
-      if (!found) {
-        const words = searchableText.split(/\s+/);
-        for (const word of words) {
-          if (word.startsWith(token) || word.endsWith(token)) {
-            tokenScore += 10;
-            found = true;
-            break;
-          }
-        }
-      }
-    }
-    
-    if (found) {
-      score += tokenScore;
-      matches.push(token);
-    }
+  try {
+    const results = filterPrompts(prompts, query);
+    self.postMessage(results);
+  } catch (error) {
+    self.postMessage({ error: error.message });
   }
-  
-  // Bonus for favorites
-  if (item.favorite) score += 5;
-  
-  // Bonus for recent updates
-  if (item.updatedAt) {
-    const daysSinceUpdate = (Date.now() - new Date(item.updatedAt).getTime()) / (1000 * 60 * 60 * 24);
-    if (daysSinceUpdate < 7) score += 3;
-    else if (daysSinceUpdate < 30) score += 1;
-  }
-  
-  return { score, matches };
-}
-
-function sortResults(results: SearchResult[], sortBy?: string, sortOrder: 'asc' | 'desc' = 'desc'): SearchResult[] {
-  if (sortBy === 'relevance' || !sortBy) {
-    return results.sort((a, b) => b.score - a.score);
-  }
-  
-  return results.sort((a, b) => {
-    let aVal: any, bVal: any;
-    
-    switch (sortBy) {
-      case 'title':
-        aVal = a.item.title.toLowerCase();
-        bVal = b.item.title.toLowerCase();
-        break;
-      case 'createdAt':
-        aVal = a.item.createdAt || '';
-        bVal = b.item.createdAt || '';
-        break;
-      case 'updatedAt':
-        aVal = a.item.updatedAt || '';
-        bVal = b.item.updatedAt || '';
-        break;
-      case 'favorite':
-        aVal = a.item.favorite ? 1 : 0;
-        bVal = b.item.favorite ? 1 : 0;
-        break;
-      default:
-        return 0;
-    }
-    
-    if (sortOrder === 'asc') {
-      return aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
-    } else {
-      return aVal > bVal ? -1 : aVal < bVal ? 1 : 0;
-    }
-  });
-}
-
-function parse(input: string) {
-  const parts = input.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const tokens: string[] = [];
-  const exactMatches: string[] = [];
-  const filters: Record<string, any> = {};
-  
-  for (const p of parts) {
-    if (p.startsWith("fav:")) {
-      filters.fav = p.endsWith("true");
-    } else if (p.startsWith("hidden:")) {
-      filters.hidden = p.endsWith("true");
-    } else if (p.startsWith("bin:")) {
-      filters.bin = p.endsWith("true");
-    } else if (p.startsWith("tag:")) {
-      const tag = p.slice(4);
-      tokens.push(tag);
-      exactMatches.push(tag);
-    } else if (p.startsWith("category:")) {
-      filters.category = p.slice(9);
-    } else if (p.startsWith("date:")) {
-      filters.date = p.slice(5);
-    } else if (p.startsWith('"') && p.endsWith('"')) {
-      // Exact phrase match
-      const phrase = p.slice(1, -1);
-      tokens.push(phrase);
-      exactMatches.push(phrase);
-    } else {
-      tokens.push(p);
-    }
-  }
-  
-  return { tokens, filters, exactMatches };
-}
+};

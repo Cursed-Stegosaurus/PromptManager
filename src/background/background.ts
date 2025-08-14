@@ -1,59 +1,70 @@
-import { listPrompts, putPrompt, getMeta, putMeta, openDb } from "../lib/db";
-import type { Prompt } from "../lib/schema";
+import { openDb, putPrompt, getMeta, putMeta } from '../lib/db.js';
+import type { Prompt } from '../lib/schema.js';
 
-/**
- * One-time seed loader on first run.
- */
-chrome.runtime.onInstalled.addListener(async details => {
-  if (details.reason === "install") {
-    await ensureSeedLoaded();
-  }
-  chrome.contextMenus.create({ id: "insert-last", title: "Insert last prompt", contexts: ["editable"] });
-  chrome.alarms.create("purge", { periodInMinutes: 60 * 24 });
+// Daily purge of recycle bin
+if (chrome.alarms) {
+  chrome.alarms.onAlarm.addListener(async (a) => {
+    if (a.name === "purge") {
+      await purgeRecycleBin();
+    }
+  });
+  
+  // Create daily purge alarm
+  chrome.alarms.create("purge", { periodInMinutes: 24 * 60 });
+}
+
+// Ensure seeds are loaded when extension starts
+chrome.runtime.onStartup.addListener(async () => {
+  await ensureSeedLoaded();
 });
 
-/**
- * Toolbar click opens the side panel.
- */
-chrome.action.onClicked.addListener(async tab => {
-  if (!tab?.id) return;
-  try {
+// Handle extension installation and setup
+chrome.runtime.onInstalled.addListener(async () => {
+  await ensureSeedLoaded();
+  
+  // Create context menu for inserting prompts
+  chrome.contextMenus.create({
+    id: "insert-prompt",
+    title: "Insert Prompt",
+    contexts: ["editable"]
+  });
+});
+
+// Handle extension icon click to open sidebar
+chrome.action.onClicked.addListener(async (tab) => {
+  if (tab?.id) {
     await chrome.sidePanel.open({ tabId: tab.id });
-  } catch {
-    // Side panel may not be available on very old Chrome versions.
   }
 });
 
-/**
- * Context menu to insert the last used prompt.
- */
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId !== "insert-last" || !tab?.id) return;
-  const lastId = await getMeta<string>("lastUsedPromptId");
-  if (!lastId) return;
-  const all = await listPrompts();
-  const p = all.find(x => x.id === lastId);
-  if (!p) return;
-  await insertIntoTab(tab.id, p.body);
+  if (info.menuItemId === "insert-prompt" && tab?.id) {
+    const lastUsedId = await getMeta<string>("lastUsedPromptId");
+    if (lastUsedId) {
+      const prompt = await getPrompt(lastUsedId);
+      if (prompt) {
+        await insertIntoTab(tab.id, prompt.body);
+      }
+    }
+  }
 });
 
-/**
- * Daily purge of recycle bin.
- */
-chrome.alarms.onAlarm.addListener(async a => {
-  if (a.name === "purge") await purgeRecycleBin();
-});
-
-/**
- * Message channel from side panel or options.
- */
+// Message channel from side panel or options
 chrome.runtime.onMessage.addListener((msg, _sender, send) => {
   (async () => {
     if (msg.type === "insert") {
       const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      if (tab?.id) await insertIntoTab(tab.id, msg.text as string);
-      send({ ok: true });
+      if (tab?.id) {
+        await insertIntoTab(tab.id, msg.text as string);
+        send({ ok: true });
+      }
     } else if (msg.type === "seed:ensure") {
+      await ensureSeedLoaded();
+      send({ ok: true });
+    } else if (msg.type === "seed:reload") {
+      // Force reload seeds by clearing the seed flag
+      await putMeta("seedLoaded", false);
+      await putMeta("seedSchemaVersion", "");
       await ensureSeedLoaded();
       send({ ok: true });
     }
@@ -61,20 +72,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, send) => {
   return true;
 });
 
-/**
- * Load seed prompts from packaged file on first run.
- * Seeds are read only and can be hidden or cloned.
- */
+// Load seed prompts from packaged file on first run
 async function ensureSeedLoaded() {
   try {
     const seeded = await getMeta<boolean>("seedLoaded");
-    if (seeded) return;
-
+    const currentSchemaVersion = await getMeta<string>("seedSchemaVersion");
+    
+    // Get seed data first
     const url = chrome.runtime.getURL("data/seed.json");
     const res = await fetch(url);
     if (!res.ok) throw new Error("Failed to load seed.json");
     const json = await res.json() as { schemaVersion: string; prompts: Prompt[] };
-
+    
+    // Check if we need to reload seeds (new version or never loaded)
+    if (seeded && currentSchemaVersion === json.schemaVersion) {
+      return;
+    }
     const db = await openDb();
     const tx = db.transaction("prompts", "readwrite");
     const store = tx.objectStore("prompts");
@@ -99,40 +112,41 @@ async function ensureSeedLoaded() {
     });
 
     await putMeta("seedLoaded", true);
+    await putMeta("seedSchemaVersion", json.schemaVersion);
   } catch (e) {
     // Non-fatal, extension still works without seeds.
     console.error("Seed load error:", e);
   }
 }
 
-/**
- * Remove items in recycle bin older than 30 days.
- */
+// Remove items in recycle bin older than 30 days
 async function purgeRecycleBin() {
-  const db = await openDb();
-  const t = db.transaction("prompts", "readwrite");
-  const store = t.objectStore("prompts");
-  const req = store.openCursor();
-  const now = Date.now();
+  try {
+    const db = await openDb();
+    const t = db.transaction("prompts", "readwrite");
+    const store = t.objectStore("prompts");
+    const req = store.openCursor();
+    const now = Date.now();
+    const cutoff = now - (30 * 24 * 60 * 60 * 1000); // 30 days
 
-  req.onsuccess = () => {
-    const cur = req.result as IDBCursorWithValue | null;
-    if (!cur) return;
-    const p = cur.value as Prompt;
-    if (p.deletedAt) {
-      const age = now - new Date(p.deletedAt).getTime();
-      if (age > 30 * 24 * 60 * 60 * 1000) {
-        store.delete(p.id);
-      }
-    }
-    cur.continue();
-  };
+    await new Promise<void>((resolve, reject) => {
+      req.onsuccess = () => {
+        const cur = req.result as IDBCursorWithValue | null;
+        if (!cur) return resolve();
+        const p = cur.value as Prompt;
+        if (p.deletedAt && new Date(p.deletedAt).getTime() < cutoff) {
+          store.delete(p.id);
+        }
+        cur.continue();
+      };
+      req.onerror = () => reject(req.error);
+    });
+  } catch (error) {
+    console.error("Purge error:", error);
+  }
 }
 
-/**
- * Try to insert text into the focused element in the tab.
- * Fallback to clipboard if blocked by page restrictions or CSP.
- */
+// Try to insert text into the focused element in the tab
 async function insertIntoTab(tabId: number, text: string) {
   try {
     await chrome.scripting.executeScript({
@@ -146,6 +160,7 @@ async function insertIntoTab(tabId: number, text: string) {
 
         function tryInsert(node: HTMLElement | null, val: string): boolean {
           if (!node) return false;
+          
           // Inputs and textareas
           if ((node as HTMLInputElement).value !== undefined) {
             const input = node as HTMLInputElement;
@@ -155,6 +170,7 @@ async function insertIntoTab(tabId: number, text: string) {
             input.dispatchEvent(new Event("input", { bubbles: true }));
             return true;
           }
+          
           // Contenteditable
           if (node.isContentEditable) {
             const sel = window.getSelection();
@@ -174,6 +190,7 @@ async function insertIntoTab(tabId: number, text: string) {
             sel.addRange(range);
             return true;
           }
+          
           return false;
         }
 
@@ -182,9 +199,11 @@ async function insertIntoTab(tabId: number, text: string) {
             try {
               const d = f.document;
               const el = d.activeElement as HTMLElement | null;
-              if (tryInsert(el, val)) return true;
+              if (el && tryInsert(el, val)) {
+                return true;
+              }
             } catch {
-              // Cross-origin frames will throw, ignore
+              // Cross-origin frame, skip
             }
           }
           return false;
@@ -192,16 +211,30 @@ async function insertIntoTab(tabId: number, text: string) {
       },
       args: [text]
     });
-  } catch {
-    // Best effort clipboard fallback on any injection error
+  } catch (error) {
+    console.error("Insert failed:", error);
+    // Fallback to clipboard
     try {
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        func: (t: string) => void navigator.clipboard.writeText(t),
-        args: [text]
-      });
-    } catch {
-      // Swallow
+      await navigator.clipboard.writeText(text);
+    } catch (clipboardError) {
+      console.error("Clipboard fallback failed:", clipboardError);
     }
+  }
+}
+
+// Helper function to get prompt from database
+async function getPrompt(id: string): Promise<Prompt | undefined> {
+  try {
+    const db = await openDb();
+    const tx = db.transaction("prompts", "readonly");
+    const store = tx.objectStore("prompts");
+    return await new Promise<Prompt | undefined>((resolve, reject) => {
+      const req = store.get(id);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (error) {
+    console.error("Failed to get prompt:", error);
+    return undefined;
   }
 }

@@ -28,8 +28,6 @@ export interface LibraryState {
     showHidden: boolean;
     insertionStrategy: "direct" | "clipboard" | "ask";
     telemetryEnabled: boolean;
-    driveBackupEnabled: boolean;
-    driveLastBackupAt?: string;
     recycleAutoPurgeDays: 30;
     encryptionEnabled?: boolean;
     saltB64?: string;

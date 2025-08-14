@@ -1,6 +1,0 @@
-{
-  "version": "1.0.0",
-  "buildDate": "2025-08-13T18:48:14.114Z",
-  "releaseNotes": "- 2024-01-XX\r\n\r\n### Added\r\n- Initial release of Prompt Library Chrome Extension\r\n- Manifest V3 compliance\r\n- Side panel interface for prompt management\r\n- Core prompt operations: create, read, update, delete\r\n- Search and filtering capabilities\r\n- Favorites and hidden prompt management\r\n- Import/export functionality (JSON format)\r\n- Optional Google Drive backup integration\r\n- Optional AES-GCM encryption for user prompts\r\n- Recycle bin with auto-purge after 30 days\r\n- Context menu integration for quick insertion\r\n- Keyboard shortcuts (Alt+P for side panel, Alt+I for last prompt)\r\n- Seed prompts for Sales, Finance, Engineering, and Operations\r\n- Responsive design with brand-compliant styling\r\n\r\n### Technical Features\r\n- TypeScript implementation\r\n- IndexedDB storage layer\r\n- Web Workers for search performance\r\n- Chrome Identity API for OAuth\r\n- Template rendering with safe HTML escaping\r\n- Modular architecture with clear separation of concerns\r\n\r\n### UI/UX\r\n- Modern, clean interface design\r\n- Brand color scheme implementation\r\n- Toast notification system\r\n- Loading states and empty states\r\n- Responsive design for different screen sizes\r\n- Smooth animations and transitions",
-  "files": []
-}

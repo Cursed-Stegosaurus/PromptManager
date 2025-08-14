@@ -1,44 +1,76 @@
-// src/sidepanel/main.ts
-import { openDb, putPrompt, getPrompt, listPrompts, putMeta } from '../lib/db.js';
-import type { Prompt } from "../lib/schema";
-import { renderTemplate } from "../lib/template";
+import { openDb, putPrompt, getPrompt, listPrompts, deletePrompt, restorePrompt, toggleFavorite, toggleHidden, putMeta, getMeta, permanentlyDeletePrompt } from '../lib/db.js';
+import type { Prompt } from '../lib/schema.js';
 
-// Declare chrome API for TypeScript
-declare const chrome: any;
-
-let q: HTMLInputElement;
-let list: HTMLElement;
-let titleEl: HTMLInputElement;
-let bodyEl: HTMLTextAreaElement;
-let toast: HTMLElement;
-let currentId: string | null = null;
-let searchWorker: Worker | null = null;
-let allPrompts: any[] = [];
-let selectedItems: Set<string> = new Set();
-let isMultiSelectMode = false;
-
-// Search state
-let searchState = {
-  showHidden: false,
-  includeBin: false,
-  sortBy: 'relevance' as 'relevance' | 'title' | 'createdAt' | 'updatedAt' | 'favorite',
-  sortOrder: 'desc' as 'asc' | 'desc'
+// Chrome API types
+declare const chrome: {
+  runtime: {
+    sendMessage: (message: any) => Promise<any>;
+    getURL: (path: string) => string;
+  };
 };
 
-init();
+// DOM elements
+const searchInput = document.getElementById('search') as HTMLInputElement;
+const clearSearchBtn = document.getElementById('clear-search') as HTMLButtonElement;
+const promptsList = document.getElementById('prompts-list') as HTMLDivElement;
+const hiddenToggle = document.getElementById('hidden-toggle') as HTMLDivElement;
+const hiddenContent = document.getElementById('hidden-content') as HTMLDivElement;
+const hiddenPromptsList = document.getElementById('hidden-prompts-list') as HTMLDivElement;
+const binToggle = document.getElementById('bin-toggle') as HTMLDivElement;
+const binContent = document.getElementById('bin-content') as HTMLDivElement;
+const binPromptsList = document.getElementById('bin-prompts-list') as HTMLDivElement;
+const detailSection = document.getElementById('detail-section') as HTMLDivElement;
+const detailTitle = document.getElementById('detail-title') as HTMLInputElement;
+const detailBody = document.getElementById('detail-body') as HTMLTextAreaElement;
+const insertButton = document.getElementById('btn-insert') as HTMLButtonElement;
+const copyButton = document.getElementById('btn-copy') as HTMLButtonElement;
+const saveButton = document.getElementById('btn-save') as HTMLButtonElement;
+const toastContainer = document.getElementById('toast-container') as HTMLDivElement;
 
+// State
+let currentPromptId: string | null = null;
+let prompts: Prompt[] = [];
+let searchWorker: Worker | null = null;
+let searchState = {
+  showHidden: false,
+  includeBin: false
+};
+
+// Initialize
 async function init() {
-  await ensureSeeds();
-  initSearchWorker();
-  wireEvents();
-  refresh();
+  try {
+    await ensureSeedsLoaded();
+    initSearchWorker();
+    wireEvents();
+    await refresh();
+  } catch (error) {
+    console.error('Failed to initialize:', error);
+    showToast('Failed to initialize', 'error');
+  }
 }
 
+// Ensure seeds are loaded
+async function ensureSeedsLoaded() {
+  try {
+    const seeded = await getMeta<boolean>("seedLoaded");
+    if (!seeded) {
+      await chrome.runtime.sendMessage({ type: "seed:ensure" });
+    }
+  } catch (error) {
+    console.error('Failed to check seeds:', error);
+  }
+}
+
+// Initialize search worker
 function initSearchWorker() {
   try {
-    searchWorker = new Worker(chrome.runtime.getURL('lib/searchWorker.js'));
+    searchWorker = new Worker(chrome.runtime.getURL('searchWorker.js'));
     searchWorker.onmessage = (e) => {
       const results = e.data;
+      if (results.error) {
+        console.error('Search worker error:', results.error);
+        return;
+      }
       displayResults(results);
     };
   } catch (error) {
@@ -46,105 +78,88 @@ function initSearchWorker() {
   }
 }
 
+// Wire up event listeners
 function wireEvents() {
-  q = document.getElementById('search') as HTMLInputElement;
-  list = document.getElementById('list') as HTMLElement;
-  titleEl = document.getElementById('title') as HTMLInputElement;
-  bodyEl = document.getElementById('body') as HTMLTextAreaElement;
-  toast = document.getElementById('toast') as HTMLElement;
-
-  q.oninput = () => performSearch();
+  // Search
+  searchInput.addEventListener('input', performSearch);
+  clearSearchBtn.addEventListener('click', clearSearch);
   
-  // Add keyboard shortcuts
+  // Toggle sections
+  hiddenToggle.addEventListener('click', () => toggleSection(hiddenToggle, hiddenContent));
+  binToggle.addEventListener('click', () => toggleSection(binToggle, binContent));
+  
+  // Detail actions
+  insertButton.addEventListener('click', insertCurrentPrompt);
+  copyButton.addEventListener('click', copyCurrentPrompt);
+  saveButton.addEventListener('click', saveCurrentPrompt);
+  
+  // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
     if (e.altKey) {
       switch (e.key.toLowerCase()) {
         case 'p':
           e.preventDefault();
-          if (currentId) {
-            document.getElementById('btn-insert')?.click();
+          if (currentPromptId) {
+            insertCurrentPrompt();
           }
           break;
         case 'i':
           e.preventDefault();
-          if (bodyEl.value) {
-            document.getElementById('btn-copy')?.click();
+          if (detailBody.value) {
+            copyCurrentPrompt();
           }
           break;
       }
     }
   });
-  
-  // Add filter controls
-  const filterControls = document.getElementById('filter-controls');
-  if (filterControls) {
-    const hiddenToggle = filterControls.querySelector('#show-hidden') as HTMLInputElement;
-    const binToggle = filterControls.querySelector('#show-bin') as HTMLInputElement;
-    const sortSelect = filterControls.querySelector('#sort-by') as HTMLSelectElement;
-    const orderToggle = filterControls.querySelector('#sort-order') as HTMLButtonElement;
+}
 
-    if (hiddenToggle) hiddenToggle.onchange = () => { searchState.showHidden = hiddenToggle.checked; performSearch(); };
-    if (binToggle) binToggle.onchange = () => { searchState.includeBin = binToggle.checked; performSearch(); };
-    if (sortSelect) sortSelect.onchange = () => { searchState.sortBy = sortSelect.value as any; performSearch(); };
-    if (orderToggle) orderToggle.onclick = () => { 
-      searchState.sortOrder = searchState.sortOrder === 'asc' ? 'desc' : 'asc'; 
-      orderToggle.textContent = searchState.sortOrder === 'asc' ? '↑' : '↓';
-      performSearch(); 
-    };
+// Toggle section visibility
+function toggleSection(toggle: HTMLElement, content: HTMLElement) {
+  const isExpanded = toggle.classList.contains('expanded');
+  if (isExpanded) {
+    toggle.classList.remove('expanded');
+    content.classList.remove('expanded');
+  } else {
+    toggle.classList.add('expanded');
+    content.classList.add('expanded');
+    // Load content if not already loaded
+    if (toggle === hiddenToggle && hiddenPromptsList.children.length === 0) {
+      loadHiddenPrompts();
+    } else if (toggle === binToggle && binPromptsList.children.length === 0) {
+      loadBinPrompts();
+    }
   }
-
-  // Add bulk operation buttons
-  const multiSelectBtn = document.getElementById('btn-multi-select');
-  if (multiSelectBtn) multiSelectBtn.onclick = toggleMultiSelect;
-
-  const selectAllBtn = document.getElementById('btn-select-all');
-  if (selectAllBtn) selectAllBtn.onclick = selectAll;
-
-  const bulkFavoriteBtn = document.getElementById('btn-bulk-favorite');
-  if (bulkFavoriteBtn) bulkFavoriteBtn.onclick = bulkFavorite;
-
-  const bulkHideBtn = document.getElementById('btn-bulk-hide');
-  if (bulkHideBtn) bulkHideBtn.onclick = bulkHide;
-
-  const bulkDeleteBtn = document.getElementById('btn-bulk-delete');
-  if (bulkDeleteBtn) bulkDeleteBtn.onclick = bulkDelete;
-
-  document.getElementById('btn-insert')!.onclick = async () => {
-    if (!currentId) return;
-    const p = await getPrompt(currentId);
-    if (!p) return;
-    await chrome.runtime.sendMessage({ type: 'insert', text: bodyEl.value });
-    showToast('Inserted or copied');
-  };
-
-  document.getElementById('btn-copy')!.onclick = async () => {
-    await navigator.clipboard.writeText(bodyEl.value);
-    showToast('Copied to clipboard');
-  };
-
-  document.getElementById('btn-fav')!.onclick = toggleFavorite;
-  document.getElementById('btn-hide')!.onclick = toggleHidden;
-  document.getElementById('btn-clone')!.onclick = cloneCurrent;
-  document.getElementById('btn-delete')!.onclick = trashCurrent;
 }
 
-async function ensureSeeds() {
-  await chrome.runtime.sendMessage({ type: 'seed:ensure' }).catch(() => {});
+// Clear search
+function clearSearch() {
+  searchInput.value = '';
+  clearSearchBtn.classList.remove('visible');
+  performSearch();
 }
 
+// Perform search using worker or fallback
 async function performSearch() {
-  const query = q.value.trim();
+  const query = searchInput.value.trim();
+  
+  // Show/hide clear button
+  if (query) {
+    clearSearchBtn.classList.add('visible');
+  } else {
+    clearSearchBtn.classList.remove('visible');
+  }
   
   if (searchWorker) {
-    // Use enhanced search worker
+    // Use search worker for smooth performance
     searchWorker.postMessage({
-      items: allPrompts,
+      prompts,
       query: {
         q: query,
         showHidden: searchState.showHidden,
         includeBin: searchState.includeBin,
-        sortBy: searchState.sortBy,
-        sortOrder: searchState.sortOrder
+        sortBy: 'updatedAt',
+        sortOrder: 'desc'
       }
     });
   } else {
@@ -154,13 +169,23 @@ async function performSearch() {
   }
 }
 
+// Basic search fallback
 function performBasicSearch(query: string): any[] {
   if (!query) {
-    return allPrompts.filter(p => !p.hidden && !p.deletedAt);
+    // Show all non-hidden, non-deleted prompts when no search query
+    const filtered = prompts.filter(p => !p.hidden && !p.deletedAt);
+    // Sort with favorites first, then by updated date
+    return filtered.sort((a, b) => {
+      // Favorites come first
+      if (a.favorite && !b.favorite) return -1;
+      if (!a.favorite && b.favorite) return 1;
+      // Within the same favorite status, sort by updated date
+      return b.updatedAt.localeCompare(a.updatedAt);
+    });
   }
 
   const terms = query.toLowerCase().split(/\s+/);
-  const filtered = allPrompts.filter(p => {
+  const filtered = prompts.filter(p => {
     if (!searchState.showHidden && p.hidden) return false;
     if (!searchState.includeBin && p.deletedAt) return false;
     
@@ -168,271 +193,390 @@ function performBasicSearch(query: string): any[] {
     return terms.every(term => searchableText.includes(term));
   });
 
-  // Basic sorting
-  if (searchState.sortBy === 'favorite') {
-    filtered.sort((a, b) => (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0));
-  } else if (searchState.sortBy === 'title') {
-    filtered.sort((a, b) => a.title.localeCompare(b.title));
-  } else if (searchState.sortBy === 'updatedAt') {
-    filtered.sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
-  }
-
-  if (searchState.sortOrder === 'asc') {
-    filtered.reverse();
-  }
-
-  return filtered;
+  // Sort with favorites first, then by updated date
+  return filtered.sort((a, b) => {
+    // Favorites come first
+    if (a.favorite && !b.favorite) return -1;
+    if (!a.favorite && b.favorite) return 1;
+    // Within the same favorite status, sort by updated date
+    return b.updatedAt.localeCompare(a.updatedAt);
+  });
 }
 
+// Display search results
 function displayResults(results: any[]) {
-  list.innerHTML = '';
+  promptsList.innerHTML = '';
   
-  for (const p of results) {
-    const div = document.createElement('div');
-    const isSelected = selectedItems.has(p.id);
-    div.className = `item ${p.id === currentId ? 'active' : ''} ${p.favorite ? 'favorite' : ''} ${p.hidden ? 'hidden' : ''} ${isSelected ? 'selected' : ''}`;
-    
-    // Create item content with better structure
-    div.innerHTML = `
-      ${isMultiSelectMode ? `<input type="checkbox" class="item-checkbox" ${isSelected ? 'checked' : ''} />` : ''}
-      <div class="item-content">
-        <div class="item-title">${escapeHtml(p.title)}</div>
-        <div class="item-meta">
-          ${p.favorite ? '<span class="favorite-icon">★</span>' : ''}
-          ${p.hidden ? '<span class="hidden-icon">👁️</span>' : ''}
-          ${p.deletedAt ? '<span class="deleted-icon">🗑️</span>' : ''}
-          <span class="category">${p.category || 'General'}</span>
-        </div>
+  if (results.length === 0) {
+    promptsList.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">🔍</div>
+        <div class="empty-state-title">No prompts found</div>
+        <div class="empty-state-message">Try adjusting your search or filters</div>
       </div>
     `;
+    return;
+  }
+  
+  results.forEach(prompt => {
+    const promptElement = createPromptElement(prompt);
+    promptsList.appendChild(promptElement);
+  });
+}
+
+// Create prompt element
+function createPromptElement(prompt: Prompt): HTMLElement {
+  const div = document.createElement('div');
+  div.className = `prompt-item ${prompt.id === currentPromptId ? 'active' : ''} ${prompt.favorite ? 'favorite' : ''} ${prompt.hidden ? 'hidden' : ''}`;
+  
+  div.setAttribute('data-prompt-id', prompt.id);
+  div.innerHTML = `
+    <div class="prompt-header">
+      <div class="prompt-title">${escapeHtml(prompt.title)}</div>
+      <div class="prompt-actions">
+        ${prompt.deletedAt ? 
+          // Deleted prompts: only restore and permanent delete
+          `<button class="action-btn" data-action="restore" title="Restore prompt"><img src="../assets/icons/restore32.png" alt="Restore" class="action-icon" /></button>
+           <button class="action-btn danger" data-action="permanentDelete" title="Delete permanently"><img src="../assets/icons/delete32.png" alt="Delete Permanently" class="action-icon" /></button>` :
+          prompt.hidden ?
+          // Hidden prompts: only show visibility toggle
+          `<button class="action-btn" data-action="hide" title="Show prompt">
+             <img src="../assets/icons/hide32.png" alt="Show" class="action-icon" />
+           </button>` :
+          // Active prompts: normal actions
+          `<button class="action-btn" data-action="fav" title="${prompt.favorite ? 'Remove from favorites' : 'Add to favorites'}">
+             <img src="../assets/icons/${prompt.favorite ? 'fav-f32.png' : 'fav-s32.png'}" alt="Favorite" class="action-icon" />
+           </button>
+           <button class="action-btn" data-action="hide" title="Hide prompt">
+             <img src="../assets/icons/visible32.png" alt="Visibility" class="action-icon" />
+           </button>
+           <button class="action-btn" data-action="clone" title="Clone prompt">
+             <img src="../assets/icons/clone32.png" alt="Clone" class="action-icon" />
+           </button>
+           ${prompt.source === 'seed' ? '' : '<button class="action-btn danger" data-action="delete" title="Delete prompt"><img src="../assets/icons/delete32.png" alt="Delete" class="action-icon" /></button>'}`
+        }
+      </div>
+    </div>
+    <div class="prompt-content">${escapeHtml(prompt.body.substring(0, 150))}${prompt.body.length > 150 ? '...' : ''}</div>
+  `;
+  
+  // Add click handler
+  div.addEventListener('click', () => selectPrompt(prompt.id));
+  
+  // Add action button handlers
+  div.querySelectorAll('.action-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const action = (btn as HTMLElement).dataset.action;
+      handlePromptAction(action!, prompt.id);
+    });
+  });
+  
+  return div;
+}
+
+// Handle prompt actions
+async function handlePromptAction(action: string, promptId: string) {
+  try {
+    switch (action) {
+      case 'fav':
+        await toggleFavorite(promptId);
+        break;
+      case 'hide':
+        await toggleHidden(promptId);
+        break;
+      case 'clone':
+        await clonePrompt(promptId);
+        break;
+      case 'delete':
+        // Prevent deletion of seed prompts
+        const prompt = await getPrompt(promptId);
+        if (prompt?.source === 'seed') {
+          showToast('Seed prompts cannot be deleted. Use hide instead.', 'error');
+          return;
+        }
+        await deletePrompt(promptId);
+        break;
+      case 'restore':
+        await restorePrompt(promptId);
+        break;
+      case 'permanentDelete':
+        if (confirm('This will permanently delete this prompt. This action cannot be undone. Continue?')) {
+          await permanentlyDeletePrompt(promptId);
+        }
+        break;
+    }
+    await refresh();
+  } catch (error) {
+    console.error('Action failed:', error);
+    showToast('Action failed', 'error');
+  }
+}
+
+// Select a prompt
+async function selectPrompt(id: string) {
+  currentPromptId = id;
+  const prompt = await getPrompt(id);
+  if (!prompt) return;
+  
+  detailTitle.value = prompt.title;
+  detailBody.value = prompt.body;
+  
+  // Show save button only for non-seed prompts
+  saveButton.classList.toggle('visible', prompt.source !== 'seed');
+  
+  // Make title and textarea editable only for non-seed prompts
+  detailTitle.readOnly = prompt.source === 'seed';
+  detailBody.readOnly = prompt.source === 'seed';
+  
+  // Store last used
+  await putMeta("lastUsedPromptId", id);
+  
+  // Update list selection
+  document.querySelectorAll('.prompt-item').forEach(item => {
+    item.classList.remove('active');
+  });
+  // Find the clicked prompt item and mark it as active
+  const clickedItem = document.querySelector(`[data-prompt-id="${id}"]`);
+  if (clickedItem) {
+    clickedItem.classList.add('active');
+  }
+}
+
+// Insert current prompt
+async function insertCurrentPrompt() {
+  if (!currentPromptId) return;
+  
+  try {
+    await chrome.runtime.sendMessage({ type: "insert", text: detailBody.value });
+    showToast('Prompt inserted');
+  } catch (error) {
+    console.error('Insert failed:', error);
+    showToast('Insert failed', 'error');
+  }
+}
+
+// Copy current prompt
+async function copyCurrentPrompt() {
+  try {
+    await navigator.clipboard.writeText(detailBody.value);
+    showToast('Copied to clipboard');
+  } catch (error) {
+    console.error('Copy failed:', error);
+    showToast('Copy failed', 'error');
+  }
+}
+
+// Save current prompt
+async function saveCurrentPrompt() {
+  if (!currentPromptId) return;
+  
+  const prompt = await getPrompt(currentPromptId);
+  if (!prompt) return;
+  
+  // Don't allow saving seed prompts
+  if (prompt.source === 'seed') {
+    showToast('Seed prompts cannot be edited', 'error');
+    return;
+  }
+  
+  try {
+    prompt.title = detailTitle.value.trim();
+    prompt.body = detailBody.value;
+    prompt.updatedAt = new Date().toISOString();
     
-    // Handle click events
-    if (isMultiSelectMode) {
-      const checkbox = div.querySelector('.item-checkbox') as HTMLInputElement;
-      if (checkbox) {
-        checkbox.onclick = (e) => {
-          e.stopPropagation();
-          toggleItemSelection(p.id);
-        };
-      }
-      div.onclick = () => toggleItemSelection(p.id);
-    } else {
-      div.onclick = () => select(p.id);
+    // Validate title is not empty
+    if (!prompt.title) {
+      showToast('Title cannot be empty', 'error');
+      return;
     }
     
-    list.appendChild(div);
-  }
-
-  if (!currentId && results[0]) {
-    select(results[0].id);
+    await putPrompt(prompt);
+    await refresh();
+    showToast('Prompt saved successfully', 'success');
+  } catch (error) {
+    console.error('Failed to save:', error);
+    showToast('Failed to save prompt', 'error');
   }
 }
 
+// Toggle current prompt favorite
+async function toggleCurrentFavorite() {
+  if (!currentPromptId) return;
+  await toggleFavorite(currentPromptId);
+  await refresh();
+  showToast('Favorite updated');
+}
+
+// Toggle current prompt hidden
+async function toggleCurrentHidden() {
+  if (!currentPromptId) return;
+  await toggleHidden(currentPromptId);
+  await refresh();
+  showToast('Visibility updated');
+}
+
+// Clone current prompt
+async function cloneCurrentPrompt() {
+  if (!currentPromptId) return;
+  await clonePrompt(currentPromptId);
+  await refresh();
+  showToast('Prompt cloned');
+}
+
+// Delete current prompt
+async function deleteCurrentPrompt() {
+  if (!currentPromptId) return;
+  
+  // Check if this is a seed prompt
+  const prompt = await getPrompt(currentPromptId);
+  if (prompt?.source === 'seed') {
+    showToast('Seed prompts cannot be deleted. Use hide instead.', 'error');
+    return;
+  }
+  
+  if (!confirm('Move this prompt to the recycle bin?')) return;
+  
+  await deletePrompt(currentPromptId);
+  await refresh();
+  showToast('Prompt moved to bin');
+}
+
+// Restore current prompt
+async function restoreCurrentPrompt() {
+  if (!currentPromptId) return;
+  await restorePrompt(currentPromptId);
+  await refresh();
+  showToast('Prompt restored');
+}
+
+// Clone a prompt
+async function clonePrompt(id: string) {
+  const prompt = await getPrompt(id);
+  if (!prompt) return;
+  
+  const clone: Prompt = {
+    ...prompt,
+    id: crypto.randomUUID(),
+    source: "user",
+    originId: prompt.source === "seed" ? prompt.id : prompt.originId,
+    title: prompt.title + " (copy)",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    version: 1
+  };
+  
+  await putPrompt(clone);
+}
+
+// Load hidden prompts
+async function loadHiddenPrompts() {
+  try {
+    const hiddenPrompts = prompts.filter(p => p.hidden && !p.deletedAt);
+    hiddenPromptsList.innerHTML = '';
+    
+    if (hiddenPrompts.length === 0) {
+      hiddenPromptsList.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-message">No hidden prompts</div>
+        </div>
+      `;
+      return;
+    }
+    
+    hiddenPrompts.forEach(prompt => {
+      const promptElement = createPromptElement(prompt);
+      hiddenPromptsList.appendChild(promptElement);
+    });
+  } catch (error) {
+    console.error('Failed to load hidden prompts:', error);
+  }
+}
+
+// Load bin prompts
+async function loadBinPrompts() {
+  try {
+    const binPrompts = prompts.filter(p => p.deletedAt);
+    binPromptsList.innerHTML = '';
+    
+    if (binPrompts.length === 0) {
+      binPromptsList.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-message">No prompts in bin</div>
+        </div>
+      `;
+      return;
+    }
+    
+    binPrompts.forEach(prompt => {
+      const promptElement = createPromptElement(prompt);
+      binPromptsList.appendChild(promptElement);
+    });
+  } catch (error) {
+    console.error('Failed to load bin prompts:', error);
+  }
+}
+
+// Refresh the prompt list
 async function refresh() {
-  allPrompts = await listPrompts(true); // Get all prompts including hidden/deleted
-  performSearch();
+  try {
+    prompts = await listPrompts(true);
+    
+    if (prompts.length === 0) {
+      // Try to manually trigger seed loading
+      try {
+        await chrome.runtime.sendMessage({ type: "seed:ensure" });
+        // Wait a bit and try again
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        prompts = await listPrompts(true);
+      } catch (seedError) {
+        console.error('Seed ensure failed:', seedError);
+      }
+    }
+    
+    performSearch();
+  } catch (error) {
+    console.error('Failed to refresh:', error);
+    showToast('Failed to refresh', 'error');
+  }
 }
 
+// Show toast notification
+function showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `
+    <div class="toast-header">
+      <span class="toast-title">${type.charAt(0).toUpperCase() + type.slice(1)}</span>
+      <button class="toast-close">×</button>
+    </div>
+    <div class="toast-message">${message}</div>
+  `;
+  
+  // Add click handler for close button
+  const closeBtn = toast.querySelector('.toast-close') as HTMLButtonElement;
+  closeBtn.addEventListener('click', () => {
+    if (toast.parentNode) {
+      toast.remove();
+    }
+  });
+  
+  toastContainer.appendChild(toast);
+  
+  // Auto-remove after 3 seconds
+  setTimeout(() => {
+    if (toast.parentNode) {
+      toast.remove();
+    }
+  }, 3000);
+}
+
+// Utility functions
 function escapeHtml(text: string): string {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
 }
 
-// Bulk Operations
-function toggleMultiSelect() {
-  isMultiSelectMode = !isMultiSelectMode;
-  selectedItems.clear();
-  
-  const multiSelectBtn = document.getElementById('btn-multi-select');
-  const selectAllBtn = document.getElementById('btn-select-all');
-  if (multiSelectBtn) {
-    multiSelectBtn.textContent = isMultiSelectMode ? 'Exit Multi-Select' : 'Multi-Select';
-    multiSelectBtn.className = isMultiSelectMode ? 'btn btn-secondary active' : 'btn btn-secondary';
-  }
-  
-  if (selectAllBtn) {
-    selectAllBtn.style.display = isMultiSelectMode ? 'inline-block' : 'none';
-  }
-  
-  // Show/hide bulk action buttons
-  const bulkActions = document.getElementById('bulk-actions');
-  if (bulkActions) {
-    bulkActions.style.display = isMultiSelectMode ? 'flex' : 'none';
-  }
-  
-  refreshListClasses();
-  updateBulkActionsState();
-  updateSelectionCount();
-}
-
-function selectAll() {
-  if (selectedItems.size === allPrompts.length) {
-    selectedItems.clear();
-  } else {
-    allPrompts.forEach(p => selectedItems.add(p.id));
-  }
-  refreshListClasses();
-  updateBulkActionsState();
-  updateSelectionCount();
-}
-
-function toggleItemSelection(id: string) {
-  if (selectedItems.has(id)) {
-    selectedItems.delete(id);
-  } else {
-    selectedItems.add(id);
-  }
-  refreshListClasses();
-  updateBulkActionsState();
-  updateSelectionCount();
-}
-
-function updateSelectionCount() {
-  const countElement = document.getElementById('bulk-selection-count');
-  if (countElement) {
-    countElement.textContent = `${selectedItems.size} item${selectedItems.size !== 1 ? 's' : ''} selected`;
-  }
-}
-
-function updateBulkActionsState() {
-  const hasSelection = selectedItems.size > 0;
-  const bulkFavoriteBtn = document.getElementById('btn-bulk-favorite') as HTMLButtonElement;
-  const bulkHideBtn = document.getElementById('btn-bulk-hide') as HTMLButtonElement;
-  const bulkDeleteBtn = document.getElementById('btn-bulk-delete') as HTMLButtonElement;
-  
-  if (bulkFavoriteBtn) bulkFavoriteBtn.disabled = !hasSelection;
-  if (bulkHideBtn) bulkHideBtn.disabled = !hasSelection;
-  if (bulkDeleteBtn) bulkDeleteBtn.disabled = !hasSelection;
-}
-
-async function bulkFavorite() {
-  if (selectedItems.size === 0) return;
-  
-  for (const id of selectedItems) {
-    const p = await getPrompt(id);
-    if (p) {
-      p.favorite = !p.favorite;
-      p.updatedAt = new Date().toISOString();
-      await putPrompt(p);
-    }
-  }
-  
-  selectedItems.clear();
-  await refresh();
-  showToast(`Updated ${selectedItems.size} prompts`);
-}
-
-async function bulkHide() {
-  if (selectedItems.size === 0) return;
-  
-  for (const id of selectedItems) {
-    const p = await getPrompt(id);
-    if (p) {
-      p.hidden = !p.hidden;
-      p.updatedAt = new Date().toISOString();
-      await putPrompt(p);
-    }
-  }
-  
-  selectedItems.clear();
-  await refresh();
-  showToast(`Updated ${selectedItems.size} prompts`);
-}
-
-async function bulkDelete() {
-  if (selectedItems.size === 0) return;
-  
-  if (!confirm(`Are you sure you want to move ${selectedItems.size} prompts to the bin?`)) {
-    return;
-  }
-  
-  for (const id of selectedItems) {
-    const p = await getPrompt(id);
-    if (p) {
-      p.deletedAt = new Date().toISOString();
-      await putPrompt(p);
-    }
-  }
-  
-  selectedItems.clear();
-  await refresh();
-  showToast(`Moved ${selectedItems.size} prompts to bin`);
-}
-
-async function select(id: string) {
-  currentId = id;
-  const p = await getPrompt(id);
-  if (!p) return;
-  titleEl.textContent = p.title;
-  bodyEl.value = p.body;
-  await putMeta("lastUsedPromptId", id);
-  refreshListClasses();
-}
-
-function refreshListClasses() {
-  for (const el of Array.from(list.children)) {
-    el.classList.toggle("active", (el as HTMLElement).textContent === titleEl.textContent);
-  }
-}
-
-function showToast(msg: string) {
-  toast.textContent = msg;
-  toast.hidden = false;
-  setTimeout(() => (toast.hidden = true), 1200);
-}
-
-async function toggleFavorite() {
-  if (!currentId) return;
-  const p = await getPrompt(currentId);
-  if (!p) return;
-  p.favorite = !p.favorite;
-  p.updatedAt = new Date().toISOString();
-  await putPrompt(p);
-  await refresh();
-  await select(p.id);
-}
-
-async function toggleHidden() {
-  if (!currentId) return;
-  const p = await getPrompt(currentId);
-  if (!p) return;
-  p.hidden = !p.hidden;
-  p.updatedAt = new Date().toISOString();
-  await putPrompt(p);
-  currentId = null;
-  await refresh();
-}
-
-async function cloneCurrent() {
-  if (!currentId) return;
-  const p = await getPrompt(currentId);
-  if (!p) return;
-  const clone: Prompt = {
-    ...p,
-    id: crypto.randomUUID(),
-    source: "user",
-    originId: p.source === "seed" ? p.id : p.originId,
-    title: p.title + " (copy)",
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    version: 1
-  };
-  await putPrompt(clone);
-  await select(clone.id);
-  showToast("Cloned");
-}
-
-async function trashCurrent() {
-  if (!currentId) return;
-  const p = await getPrompt(currentId);
-  if (!p) return;
-  p.deletedAt = new Date().toISOString();
-  await putPrompt(p);
-  currentId = null;
-  titleEl.textContent = "";
-  bodyEl.value = "";
-  await refresh();
-  showToast("Moved to bin");
-}
-
+// Initialize when DOM is loaded
+document.addEventListener('DOMContentLoaded', init);

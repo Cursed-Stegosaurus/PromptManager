@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prompt Library Test Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .test-input {
+            width: 100%;
+            min-height: 100px;
+            padding: 10px;
+            border: 2px solid #0075BA;
+            border-radius: 6px;
+            font-family: inherit;
+            margin: 10px 0;
+        }
+        .test-button {
+            background: #0075BA;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .test-button:hover {
+            background: #005a8f;
+        }
+        .instructions {
+            background: #f9f9f9;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Prompt Library Extension Test Page</h1>
+    
+    <div class="instructions">
+        <h3>Testing Instructions:</h3>
+        <ol>
+            <li>Load the extension in Chrome (chrome://extensions/ → Load unpacked → select dist folder)</li>
+            <li>Open the side panel (click extension icon → Side panel)</li>
+            <li>Test the functionality below</li>
+        </ol>
+    </div>
+
+    <div class="test-section">
+        <h3>Text Input Test</h3>
+        <p>Test inserting prompts into a regular text input:</p>
+        <input type="text" class="test-input" placeholder="Click here and try to insert a prompt...">
+    </div>
+
+    <div class="test-section">
+        <h3>Textarea Test</h3>
+        <p>Test inserting prompts into a textarea:</p>
+        <textarea class="test-input" placeholder="Click here and try to insert a prompt..."></textarea>
+    </div>
+
+    <div class="test-section">
+        <h3>Content Editable Test</h3>
+        <p>Test inserting prompts into a content editable div:</p>
+        <div class="test-input" contenteditable="true" placeholder="Click here and try to insert a prompt..."></div>
+    </div>
+
+    <div class="test-section">
+        <h3>Context Menu Test</h3>
+        <p>Right-click in any of the input fields above and select "Insert Prompt" from the context menu.</p>
+        <p><strong>Note:</strong> This requires the extension to be loaded and the context menu to be working.</p>
+    </div>
+
+    <div class="test-section">
+        <h3>Keyboard Shortcuts Test</h3>
+        <p>Test keyboard shortcuts:</p>
+        <ul>
+            <li><strong>Alt+P:</strong> Insert current prompt (if one is selected)</li>
+            <li><strong>Alt+I:</strong> Copy current prompt to clipboard</li>
+        </ul>
+        <p><strong>Note:</strong> These shortcuts work when the extension is loaded and a prompt is selected.</p>
+    </div>
+
+    <div class="test-section">
+        <h3>Extension Status</h3>
+        <div id="extension-status">Checking extension status...</div>
+        <button class="test-button" onclick="checkExtensionStatus()">Check Status</button>
+    </div>
+
+    <script>
+        function checkExtensionStatus() {
+            const statusDiv = document.getElementById('extension-status');
+            
+            // Check if the extension is loaded
+            if (typeof chrome !== 'undefined' && chrome.runtime) {
+                statusDiv.innerHTML = `
+                    <strong>✅ Extension Loaded</strong><br>
+                    <small>Chrome runtime detected</small>
+                `;
+            } else {
+                statusDiv.innerHTML = `
+                    <strong>❌ Extension Not Loaded</strong><br>
+                    <small>Chrome runtime not detected. Make sure the extension is loaded.</small>
+                `;
+            }
+        }
+
+        // Check status on page load
+        document.addEventListener('DOMContentLoaded', checkExtensionStatus);
+
+        // Add some test functionality
+        document.querySelectorAll('.test-input').forEach(input => {
+            input.addEventListener('focus', function() {
+                this.style.borderColor = '#00A3E3';
+            });
+            
+            input.addEventListener('blur', function() {
+                this.style.borderColor = '#0075BA';
+            });
+        });
+    </script>
+</body>
+</html>

@@ -20,6 +20,8 @@ await build({
   format: "esm",
   sourcemap: true,
   target: ["chrome114"],
+  outExtension: { '.js': '.js' },
+  entryNames: '[name]'
 });
 
 // Copy static files
@@ -28,6 +30,14 @@ function copyDir(src, dest) {
   cpSync(src, dest, { recursive: true });
 }
 copyDir("public", outdir);
+
+// Move background.js to root if it's in a subdirectory
+const backgroundSrc = resolve(outdir, "background", "background.js");
+const backgroundDest = resolve(outdir, "background.js");
+if (existsSync(backgroundSrc)) {
+  cpSync(backgroundSrc, backgroundDest);
+  rmSync(resolve(outdir, "background"), { recursive: true, force: true });
+}
 
 // Patch manifest to point to built files
 const manifestPath = resolve(outdir, "manifest.json");
