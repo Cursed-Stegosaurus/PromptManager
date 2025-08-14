@@ -6,6 +6,7 @@ declare const chrome: {
   runtime: {
     sendMessage: (message: any) => Promise<any>;
     getURL: (path: string) => string;
+    openOptionsPage: () => void;
   };
 };
 
@@ -25,6 +26,7 @@ const detailBody = document.getElementById('detail-body') as HTMLTextAreaElement
 const insertButton = document.getElementById('btn-insert') as HTMLButtonElement;
 const copyButton = document.getElementById('btn-copy') as HTMLButtonElement;
 const saveButton = document.getElementById('btn-save') as HTMLButtonElement;
+const optionsButton = document.getElementById('btn-options') as HTMLButtonElement;
 const toastContainer = document.getElementById('toast-container') as HTMLDivElement;
 
 // State
@@ -92,6 +94,7 @@ function wireEvents() {
   insertButton.addEventListener('click', insertCurrentPrompt);
   copyButton.addEventListener('click', copyCurrentPrompt);
   saveButton.addEventListener('click', saveCurrentPrompt);
+  optionsButton.addEventListener('click', openOptions);
   
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
@@ -569,6 +572,11 @@ function showToast(message: string, type: 'success' | 'error' | 'info' = 'info')
       toast.remove();
     }
   }, 3000);
+}
+
+// Open options page
+function openOptions() {
+  chrome.runtime.openOptionsPage();
 }
 
 // Utility functions

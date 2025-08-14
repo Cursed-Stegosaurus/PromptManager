@@ -141,6 +141,7 @@ var detailBody = document.getElementById("detail-body");
 var insertButton = document.getElementById("btn-insert");
 var copyButton = document.getElementById("btn-copy");
 var saveButton = document.getElementById("btn-save");
+var optionsButton = document.getElementById("btn-options");
 var toastContainer = document.getElementById("toast-container");
 var currentPromptId = null;
 var prompts = [];
@@ -193,6 +194,7 @@ function wireEvents() {
   insertButton.addEventListener("click", insertCurrentPrompt);
   copyButton.addEventListener("click", copyCurrentPrompt);
   saveButton.addEventListener("click", saveCurrentPrompt);
+  optionsButton.addEventListener("click", openOptions);
   document.addEventListener("keydown", (e) => {
     if (e.altKey) {
       switch (e.key.toLowerCase()) {
@@ -540,6 +542,9 @@ function showToast(message, type = "info") {
       toast.remove();
     }
   }, 3e3);
+}
+function openOptions() {
+  chrome.runtime.openOptionsPage();
 }
 function escapeHtml(text) {
   const div = document.createElement("div");

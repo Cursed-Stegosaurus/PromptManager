@@ -523,6 +523,16 @@ body {
   object-fit: contain;
 }
 
+.gear-icon {
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+}
+
+#btn-options:hover .gear-icon {
+  color: var(--primary);
+  transform: rotate(15deg);
+}
+
 /* Specific button states */
 .btn-fav.favorited .btn-icon-img {
   content: url('../assets/icons/fav-f16.png');
