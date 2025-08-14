@@ -24,7 +24,7 @@
           <div class="import-export-controls">
             <button id="btn-export" class="btn btn-secondary">Export All Prompts</button>
             <button id="btn-import" class="btn btn-secondary">Import Prompts</button>
-            <input type="file" id="import-file" accept=".json" style="display: none;" />
+            <input type="file" id="import-file" accept=".json" class="hidden" />
           </div>
         </div>
       </section>
@@ -43,7 +43,7 @@
           </p>
         </div>
         
-        <div class="encryption-controls" id="encryption-controls" style="display: none;">
+        <div class="encryption-controls hidden" id="encryption-controls">
           <div class="password-input-group">
             <label for="encryption-passphrase">Passphrase:</label>
             <input type="password" id="encryption-passphrase" placeholder="Enter your passphrase" />

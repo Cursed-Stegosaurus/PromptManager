@@ -102,7 +102,11 @@ async function loadSettings() {
   try {
     const encryptionOn = await getMeta("encryptionEnabled") ?? false;
     encryptionEnabled.checked = encryptionOn;
-    encryptionControls.style.display = encryptionOn ? "block" : "none";
+    if (encryptionOn) {
+      encryptionControls.classList.remove("hidden");
+    } else {
+      encryptionControls.classList.add("hidden");
+    }
     const telemetry = await getMeta("telemetryEnabled") ?? false;
     telemetryEnabled.checked = telemetry;
     const purgeDays = await getMeta("recycleAutoPurgeDays") ?? 30;
@@ -117,11 +121,13 @@ function wireEvents() {
   importFile.addEventListener("change", handleImport);
   encryptionEnabled.addEventListener("change", async () => {
     const enabled = encryptionEnabled.checked;
-    encryptionControls.style.display = enabled ? "block" : "none";
-    await putMeta("encryptionEnabled", enabled);
     if (enabled) {
+      encryptionControls.classList.remove("hidden");
       showToast("Encryption enabled. Set a passphrase to secure your prompts.", "info");
+    } else {
+      encryptionControls.classList.add("hidden");
     }
+    await putMeta("encryptionEnabled", enabled);
   });
   setPassphraseButton.addEventListener("click", setEncryptionPassphrase);
   telemetryEnabled.addEventListener("change", async () => {

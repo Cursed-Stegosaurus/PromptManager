@@ -400,6 +400,11 @@ select:focus {
   }
 }
 
+/* Utility Classes */
+.hidden {
+  display: none !important;
+}
+
 /* Loading States */
 .loading {
   display: flex;

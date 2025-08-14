@@ -33,7 +33,11 @@ async function loadSettings() {
     // Encryption
     const encryptionOn = await getMeta<boolean>('encryptionEnabled') ?? false;
     encryptionEnabled.checked = encryptionOn;
-    encryptionControls.style.display = encryptionOn ? 'block' : 'none';
+    if (encryptionOn) {
+      encryptionControls.classList.remove('hidden');
+    } else {
+      encryptionControls.classList.add('hidden');
+    }
     
     // Other settings
     const telemetry = await getMeta<boolean>('telemetryEnabled') ?? false;
@@ -56,12 +60,13 @@ function wireEvents() {
   // Encryption
   encryptionEnabled.addEventListener('change', async () => {
     const enabled = encryptionEnabled.checked;
-    encryptionControls.style.display = enabled ? 'block' : 'none';
-    await putMeta('encryptionEnabled', enabled);
-    
     if (enabled) {
+      encryptionControls.classList.remove('hidden');
       showToast('Encryption enabled. Set a passphrase to secure your prompts.', 'info');
+    } else {
+      encryptionControls.classList.add('hidden');
     }
+    await putMeta('encryptionEnabled', enabled);
   });
   
   setPassphraseButton.addEventListener('click', setEncryptionPassphrase);
