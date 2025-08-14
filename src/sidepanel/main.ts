@@ -377,7 +377,7 @@ async function saveCurrentPrompt() {
   const prompt = await getPrompt(currentPromptId);
   if (!prompt) return;
   
-  // Don't allow saving seed prompts
+  // Don't allow saving starter prompts
   if (prompt.source === 'seed') {
     showToast('Seed prompts cannot be edited', 'error');
     return;
@@ -475,7 +475,9 @@ async function clonePrompt(id: string) {
 // Load hidden prompts
 async function loadHiddenPrompts() {
   try {
-    const hiddenPrompts = prompts.filter(p => p.hidden && !p.deletedAt);
+    // Get all prompts including hidden ones
+    const allPrompts = await listPrompts(true);
+    const hiddenPrompts = allPrompts.filter(p => p.hidden && !p.deletedAt);
     hiddenPromptsList.innerHTML = '';
     
     if (hiddenPrompts.length === 0) {
@@ -499,7 +501,9 @@ async function loadHiddenPrompts() {
 // Load bin prompts
 async function loadBinPrompts() {
   try {
-    const binPrompts = prompts.filter(p => p.deletedAt);
+    // Get all prompts including deleted ones
+    const allPrompts = await listPrompts(true);
+    const binPrompts = allPrompts.filter(p => p.deletedAt);
     binPromptsList.innerHTML = '';
     
     if (binPrompts.length === 0) {

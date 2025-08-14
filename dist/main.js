@@ -464,7 +464,8 @@ async function clonePrompt(id) {
 }
 async function loadHiddenPrompts() {
   try {
-    const hiddenPrompts = prompts.filter((p) => p.hidden && !p.deletedAt);
+    const allPrompts = await listPrompts(true);
+    const hiddenPrompts = allPrompts.filter((p) => p.hidden && !p.deletedAt);
     hiddenPromptsList.innerHTML = "";
     if (hiddenPrompts.length === 0) {
       hiddenPromptsList.innerHTML = `
@@ -484,7 +485,8 @@ async function loadHiddenPrompts() {
 }
 async function loadBinPrompts() {
   try {
-    const binPrompts = prompts.filter((p) => p.deletedAt);
+    const allPrompts = await listPrompts(true);
+    const binPrompts = allPrompts.filter((p) => p.deletedAt);
     binPromptsList.innerHTML = "";
     if (binPrompts.length === 0) {
       binPromptsList.innerHTML = `

@@ -39,6 +39,14 @@ if (existsSync(backgroundSrc)) {
   rmSync(resolve(outdir, "background"), { recursive: true, force: true });
 }
 
+// Move options.js to options folder
+const optionsSrc = resolve(outdir, "options.js");
+const optionsDest = resolve(outdir, "options", "options.js");
+if (existsSync(optionsSrc)) {
+  cpSync(optionsSrc, optionsDest);
+  rmSync(optionsSrc, { force: true });
+}
+
 // Patch manifest to point to built files
 const manifestPath = resolve(outdir, "manifest.json");
 const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));

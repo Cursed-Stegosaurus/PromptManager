@@ -10,98 +10,118 @@
   <div class="options-container">
     <header class="options-header">
       <h1>Prompt Cortex Settings</h1>
-      <p>Configure your prompt library preferences and backup options</p>
+      <p>Configure your prompt library preferences and manage prompts</p>
     </header>
 
-    <main class="options-content">
-      <!-- Import/Export Section -->
-      <section class="options-section">
-        <h2>Import & Export</h2>
-        <div class="setting-group">
-          <p class="setting-description">
-            Export your prompts to a JSON file or import prompts from another installation.
-          </p>
-          <div class="import-export-controls">
-            <button id="btn-export" class="btn btn-secondary">Export All Prompts</button>
-            <button id="btn-import" class="btn btn-secondary">Import Prompts</button>
-            <input type="file" id="import-file" accept=".json" class="hidden" />
-          </div>
-        </div>
-      </section>
+    <div class="options-layout">
+      <!-- Left Panel: Settings (1/3 width) -->
+      <div class="settings-panel">
+        <main class="options-content">
+          <!-- Import/Export Section -->
+          <section class="options-section">
+            <h2>Import & Export</h2>
+            <div class="setting-group">
+              <p class="setting-description">
+                Export your prompts to a JSON file or import prompts from another installation.
+              </p>
+              <div class="import-export-controls">
+                <button id="btn-export" class="btn btn-secondary">Export All Prompts</button>
+                <button id="btn-import" class="btn btn-secondary">Import Prompts</button>
+                <input type="file" id="import-file" accept=".json" class="hidden" />
+              </div>
+            </div>
+          </section>
 
-      <!-- Encryption Section -->
-      <section class="options-section">
-        <h2>Encryption</h2>
-        <div class="setting-group">
-          <label class="setting-label">
-            <input type="checkbox" id="encryption-enabled" />
-            Enable encryption for user prompts
-          </label>
-          <p class="setting-description">
-            Encrypt your personal prompts with a passphrase. Seed prompts remain unencrypted.
-            <strong>Warning:</strong> If you forget your passphrase, encrypted data cannot be recovered.
-          </p>
-        </div>
-        
-        <div class="encryption-controls hidden" id="encryption-controls">
-          <div class="password-input-group">
-            <label for="encryption-passphrase">Passphrase:</label>
-            <input type="password" id="encryption-passphrase" placeholder="Enter your passphrase" />
-            <button id="btn-set-passphrase" class="btn btn-primary">Set Passphrase</button>
-          </div>
-          <div class="password-input-group">
-            <label for="confirm-passphrase">Confirm:</label>
-            <input type="password" id="confirm-passphrase" placeholder="Confirm your passphrase" />
-          </div>
-        </div>
-      </section>
+          
 
-      <!-- Seed Management -->
-      <section class="options-section">
-        <h2>Seed Prompts</h2>
-        <div class="setting-group">
-          <p class="setting-description">
-            Seed prompts are built-in templates that provide a foundation for your prompt library. 
-            You can reload them to get the latest versions or reset to defaults.
-          </p>
-          <div class="seed-controls">
-            <button id="btn-reload-seeds" class="btn btn-secondary">Reload Seed Prompts</button>
-            <button id="btn-reset-seeds" class="btn btn-danger">Reset All Seeds</button>
-          </div>
-          <p class="setting-description">
-            <strong>Note:</strong> Reloading seeds will update existing seed prompts. Resetting will remove all seed prompts and reload them fresh.
-          </p>
-        </div>
-      </section>
+          <!-- Advanced Settings -->
+          <section class="options-section">
+            <h2>Advanced Settings</h2>
+            <div class="setting-group">
+              <label class="setting-label">
+                <input type="checkbox" id="telemetry-enabled" />
+                Enable usage analytics
+              </label>
+              <p class="setting-description">
+                Help improve the extension by sharing anonymous usage data.
+              </p>
+            </div>
+            
+            <div class="setting-group">
+              <label for="recycle-purge-days">Auto-purge deleted prompts after:</label>
+              <select id="recycle-purge-days">
+                <option value="7">7 days</option>
+                <option value="14">14 days</option>
+                <option value="30" selected>30 days</option>
+                <option value="60">60 days</option>
+                <option value="90">90 days</option>
+              </select>
+              <p class="setting-description">
+                Prompts in the recycle bin will be permanently deleted after this period.
+              </p>
+            </div>
+          </section>
+        </main>
+      </div>
 
-      <!-- Advanced Settings -->
-      <section class="options-section">
-        <h2>Advanced Settings</h2>
-        <div class="setting-group">
-          <label class="setting-label">
-            <input type="checkbox" id="telemetry-enabled" />
-            Enable usage analytics
-          </label>
-          <p class="setting-description">
-            Help improve the extension by sharing anonymous usage data.
-          </p>
+      <!-- Right Panel: Prompt Editor (2/3 width) -->
+      <div class="editor-panel">
+        <div class="editor-header">
+          <h2>Prompt Editor</h2>
+          <div class="editor-controls">
+            <button id="btn-new-prompt" class="btn btn-primary">New Prompt</button>
+            <button id="btn-save-prompt" class="btn btn-success">Save Prompt</button>
+            <button id="btn-delete-prompt" class="btn btn-danger">Delete</button>
+          </div>
         </div>
-        
-        <div class="setting-group">
-          <label for="recycle-purge-days">Auto-purge deleted prompts after:</label>
-          <select id="recycle-purge-days">
-            <option value="7">7 days</option>
-            <option value="14">14 days</option>
-            <option value="30" selected>30 days</option>
-            <option value="60">60 days</option>
-            <option value="90">90 days</option>
+
+        <div class="prompt-selector">
+          <label for="prompt-select">Select Prompt:</label>
+          <select id="prompt-select">
+            <option value="">-- Select a prompt --</option>
           </select>
-          <p class="setting-description">
-            Prompts in the recycle bin will be permanently deleted after this period.
-          </p>
+          <div class="prompt-source-indicator">
+            <span id="prompt-source-badge" class="source-badge"></span>
+          </div>
         </div>
-      </section>
-    </main>
+
+        <div class="prompt-editor">
+          <div class="editor-row">
+            <label for="prompt-title">Title:</label>
+            <input type="text" id="prompt-title" placeholder="Enter prompt title" />
+          </div>
+
+          <div class="editor-row">
+            <label for="prompt-tags">Tags:</label>
+            <div class="tags-input-container">
+              <div id="tags-display" class="tags-display"></div>
+              <input type="text" id="prompt-tags" placeholder="Type tag and press Enter" />
+            </div>
+          </div>
+
+          <div class="editor-row">
+            <label for="prompt-body">Content:</label>
+            <textarea id="prompt-body" placeholder="Enter prompt content..." rows="12"></textarea>
+          </div>
+        </div>
+
+        <!-- Prompt Cards Section -->
+        <div class="prompts-cards-section">
+          <h3>All Prompts</h3>
+          <div class="prompts-filter">
+            <input type="text" id="prompts-search" placeholder="Search prompts..." />
+            <select id="prompts-filter-source">
+              <option value="">All Sources</option>
+              <option value="seed">Seed Only</option>
+              <option value="user">User Only</option>
+            </select>
+          </div>
+          <div id="prompts-cards" class="prompts-cards">
+            <!-- Prompt cards will be populated here -->
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- Toast container -->
     <div id="toast-container" class="toast-container"></div>
