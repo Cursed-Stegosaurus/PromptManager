@@ -1,13 +1,16 @@
-import { openDb, listPrompts, putPrompt, putMeta, getMeta, deletePrompt } from '../lib/db.js';
+import { openDb, listPrompts, putPrompt, putMeta, getMeta, deletePrompt, getAnalytics, toggleFavorite, toggleHidden, restorePrompt } from '../lib/db.js';
 import type { Prompt } from '../lib/schema.js';
 
 // DOM elements
 const exportButton = document.getElementById('btn-export') as HTMLButtonElement;
 const importButton = document.getElementById('btn-import') as HTMLButtonElement;
 const importFile = document.getElementById('import-file') as HTMLInputElement;
-const telemetryEnabled = document.getElementById('telemetry-enabled') as HTMLInputElement;
 const recyclePurgeDays = document.getElementById('recycle-purge-days') as HTMLSelectElement;
 const toastContainer = document.getElementById('toast-container') as HTMLDivElement;
+
+// Analytics elements
+const totalUsed = document.getElementById('total-used') as HTMLSpanElement;
+const topPromptsList = document.getElementById('top-prompts-list') as HTMLDivElement;
 
 // New prompt editor elements
 const newPromptButton = document.getElementById('btn-new-prompt') as HTMLButtonElement;
@@ -23,6 +26,14 @@ const promptsSearch = document.getElementById('prompts-search') as HTMLInputElem
 const promptsFilterSource = document.getElementById('prompts-filter-source') as HTMLSelectElement;
 const promptsCards = document.getElementById('prompts-cards') as HTMLDivElement;
 
+// Collapsible section elements
+const hiddenToggle = document.getElementById('hidden-toggle') as HTMLDivElement;
+const hiddenContent = document.getElementById('hidden-content') as HTMLDivElement;
+const hiddenPromptsCards = document.getElementById('hidden-prompts-cards') as HTMLDivElement;
+const deletedToggle = document.getElementById('deleted-toggle') as HTMLDivElement;
+const deletedContent = document.getElementById('deleted-content') as HTMLDivElement;
+const deletedPromptsCards = document.getElementById('deleted-prompts-cards') as HTMLDivElement;
+
 // State
 let currentPrompt: Prompt | null = null;
 let allPrompts: Prompt[] = [];
@@ -33,7 +44,7 @@ let isEditing = false;
 async function init() {
   try {
     await loadSettings();
-    await loadPrompts();
+    await refreshPrompts();
     wireEvents();
     setupTagInput();
   } catch (error) {
@@ -46,9 +57,6 @@ async function init() {
 async function loadSettings() {
   try {
     // Other settings
-    const telemetry = await getMeta<boolean>('telemetryEnabled') ?? false;
-    telemetryEnabled.checked = telemetry;
-    
     const purgeDays = await getMeta<number>('recycleAutoPurgeDays') ?? 30;
     recyclePurgeDays.value = purgeDays.toString();
   } catch (error) {
@@ -67,7 +75,7 @@ async function loadPrompts() {
     if (allPrompts.length === 0) {
       console.log('No prompts found, ensuring starters are loaded...');
       try {
-        await chrome.runtime.sendMessage({ type: "seed:ensure" });
+        await chrome.runtime.sendMessage({ type: "starter:ensure" });
         // Wait a bit and try again
         await new Promise(resolve => setTimeout(resolve, 1000));
         allPrompts = await listPrompts(true);
@@ -82,7 +90,7 @@ async function loadPrompts() {
     
     // Show debug info
     if (allPrompts.length === 0) {
-      showToast('No prompts found. Try reloading seed prompts.', 'info');
+      showToast('No prompts found. Try reloading starter prompts.', 'info');
     } else {
       showToast(`Loaded ${allPrompts.length} prompts`, 'info');
     }
@@ -98,6 +106,59 @@ async function loadPrompts() {
     renderPromptCards();
   }
 }
+
+// Refresh prompts and analytics
+async function refreshPrompts() {
+  await loadPrompts();
+  await loadAnalytics();
+}
+
+// Load analytics data
+async function loadAnalytics() {
+  try {
+    const analytics = await getAnalytics();
+    
+    // Update total used counter
+    if (totalUsed) {
+      totalUsed.textContent = analytics.totalPromptsUsed.toString();
+    }
+    
+    // Update top prompts list
+    if (topPromptsList) {
+      if (analytics.topUsedPrompts.length === 0) {
+        topPromptsList.innerHTML = '<div class="empty-analytics">No prompts used yet</div>';
+      } else {
+        // Get prompt titles for the top used prompts
+        const topPromptsWithTitles = await Promise.all(
+          analytics.topUsedPrompts.map(async (usage) => {
+            const prompt = allPrompts.find(p => p.id === usage.promptId);
+            return {
+              ...usage,
+              title: prompt?.title || 'Unknown Prompt'
+            };
+          })
+        );
+        
+        // Render the top prompts list
+        topPromptsList.innerHTML = topPromptsWithTitles
+          .map((prompt, index) => `
+            <div class="prompt-usage-item">
+              <span class="prompt-usage-title">${index + 1}. ${escapeHtml(prompt.title)}</span>
+              <span class="prompt-usage-count">${prompt.usageCount} uses</span>
+            </div>
+          `)
+          .join('');
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load analytics:', error);
+    if (topPromptsList) {
+      topPromptsList.innerHTML = '<div class="empty-analytics">Failed to load analytics</div>';
+    }
+  }
+}
+
+
 
 // Create sample prompts for testing
 function createSamplePrompts(): Prompt[] {
@@ -134,19 +195,19 @@ function populatePromptSelect() {
   promptSelect.innerHTML = '<option value="">-- Select a prompt --</option>';
   
   // Group prompts by source
-  const seedPrompts = allPrompts.filter(p => p.source === 'seed');
+  const starterPrompts = allPrompts.filter(p => p.source === 'starter');
   const userPrompts = allPrompts.filter(p => p.source === 'user');
   
-  if (seedPrompts.length > 0) {
-    const seedGroup = document.createElement('optgroup');
-    seedGroup.label = 'Seed Prompts';
-    seedPrompts.forEach(prompt => {
+  if (starterPrompts.length > 0) {
+    const starterGroup = document.createElement('optgroup');
+    starterGroup.label = 'Starter Prompts';
+    starterPrompts.forEach(prompt => {
       const option = document.createElement('option');
       option.value = prompt.id;
       option.textContent = prompt.title;
-      seedGroup.appendChild(option);
+      starterGroup.appendChild(option);
     });
-    promptSelect.appendChild(seedGroup);
+    promptSelect.appendChild(starterGroup);
   }
   
   if (userPrompts.length > 0) {
@@ -169,11 +230,14 @@ function wireEvents() {
   importButton.addEventListener('click', () => importFile.click());
   importFile.addEventListener('change', handleImport);
   
-  // Other settings
-  telemetryEnabled.addEventListener('change', async () => {
-    await putMeta('telemetryEnabled', telemetryEnabled.checked);
-  });
+  // Meta Prompt
+  const metaPromptButton = document.getElementById('btn-meta-prompt') as HTMLButtonElement;
   
+  if (metaPromptButton) {
+    metaPromptButton.addEventListener('click', copyMetaPrompt);
+  }
+  
+  // Other settings
   recyclePurgeDays.addEventListener('change', async () => {
     await putMeta('recycleAutoPurgeDays', parseInt(recyclePurgeDays.value));
   });
@@ -187,6 +251,10 @@ function wireEvents() {
   // Search and filter
   promptsSearch.addEventListener('input', filterPromptCards);
   promptsFilterSource.addEventListener('change', filterPromptCards);
+  
+  // Collapsible sections
+  hiddenToggle.addEventListener('click', () => toggleSection(hiddenToggle, hiddenContent));
+  deletedToggle.addEventListener('click', () => toggleSection(deletedToggle, deletedContent));
 }
 
 // Setup tag input functionality
@@ -198,6 +266,18 @@ function setupTagInput() {
       promptTags.value = '';
     }
   });
+}
+
+// Toggle section visibility
+function toggleSection(toggle: HTMLElement, content: HTMLElement) {
+  const isExpanded = toggle.classList.contains('expanded');
+  if (isExpanded) {
+    toggle.classList.remove('expanded');
+    content.classList.remove('expanded');
+  } else {
+    toggle.classList.add('expanded');
+    content.classList.add('expanded');
+  }
 }
 
 // Add a new tag
@@ -222,8 +302,13 @@ function renderTags() {
     tagElement.className = 'tag-item';
     tagElement.innerHTML = `
       ${tag}
-      <button class="tag-remove" onclick="removeTag('${tag}')">×</button>
+      <button class="tag-remove">×</button>
     `;
+    
+    // Add event listener for the remove button
+    const removeBtn = tagElement.querySelector('.tag-remove') as HTMLButtonElement;
+    removeBtn.addEventListener('click', () => removeTag(tag));
+    
     tagsDisplay.appendChild(tagElement);
   });
 }
@@ -289,10 +374,10 @@ function loadPromptIntoEditor(prompt: Prompt) {
 // Update editor buttons state
 function updateEditorButtons() {
   if (currentPrompt) {
-    savePromptButton.disabled = currentPrompt.source === 'seed';
-    deletePromptButton.disabled = currentPrompt.source === 'seed';
-    promptTitle.readOnly = currentPrompt.source === 'seed';
-    promptBody.readOnly = currentPrompt.source === 'seed';
+    savePromptButton.disabled = currentPrompt.source === 'starter';
+    deletePromptButton.disabled = currentPrompt.source === 'starter';
+    promptTitle.readOnly = currentPrompt.source === 'starter';
+    promptBody.readOnly = currentPrompt.source === 'starter';
   } else {
     savePromptButton.disabled = false;
     deletePromptButton.disabled = true;
@@ -318,8 +403,8 @@ async function saveCurrentPrompt() {
     
       if (currentPrompt) {
     // Update existing prompt
-    if (currentPrompt.source === 'seed') {
-      showToast('Seed prompts cannot be edited', 'error');
+    if (currentPrompt.source === 'starter') {
+      showToast('Starter prompts cannot be edited', 'error');
       return;
     }
     prompt = { ...currentPrompt };
@@ -346,7 +431,7 @@ async function saveCurrentPrompt() {
     prompt.updatedAt = new Date().toISOString();
     
     await putPrompt(prompt);
-    await loadPrompts();
+    await refreshPrompts();
     
     // Update selection if this was a new prompt
     if (!currentPrompt) {
@@ -356,6 +441,9 @@ async function saveCurrentPrompt() {
     
     showToast('Prompt saved successfully', 'success');
     updateEditorButtons();
+    
+    // Notify sidebar to refresh
+    chrome.runtime.sendMessage({ type: "prompts:updated" });
   } catch (error) {
     console.error('Failed to save prompt:', error);
     showToast('Failed to save prompt', 'error');
@@ -366,8 +454,8 @@ async function saveCurrentPrompt() {
 async function deleteCurrentPrompt() {
   if (!currentPrompt) return;
   
-  if (currentPrompt.source === 'seed') {
-    showToast('Seed prompts cannot be deleted', 'error');
+  if (currentPrompt.source === 'starter') {
+    showToast('Starter prompts cannot be deleted', 'error');
     return;
   }
   
@@ -377,7 +465,7 @@ async function deleteCurrentPrompt() {
   
   try {
     await deletePrompt(currentPrompt.id);
-    await loadPrompts();
+    await refreshPrompts();
     clearEditor();
     currentPrompt = null;
     promptSelect.value = '';
@@ -385,6 +473,9 @@ async function deleteCurrentPrompt() {
     promptSourceBadge.className = 'source-badge';
     updateEditorButtons();
     showToast('Prompt deleted successfully', 'success');
+    
+    // Notify sidebar to refresh
+    chrome.runtime.sendMessage({ type: "prompts:updated" });
   } catch (error) {
     console.error('Failed to delete prompt:', error);
     showToast('Failed to delete prompt', 'error');
@@ -420,32 +511,75 @@ function renderPromptCards(prompts: Prompt[] = allPrompts) {
     return;
   }
   
-  promptsCards.innerHTML = '';
+  // Separate prompts by status
+  const activePrompts = prompts.filter(p => !p.hidden && !p.deletedAt);
+  const hiddenPrompts = prompts.filter(p => p.hidden && !p.deletedAt);
+  const deletedPrompts = prompts.filter(p => p.deletedAt);
   
-  if (prompts.length === 0) {
-    console.log('No prompts to render, showing empty state');
+  // Sort active prompts by priority: favorites first, then by usage count and alphabetical
+  const sortedActivePrompts = sortPromptsByPriority(activePrompts);
+  
+  // Render active prompts
+  promptsCards.innerHTML = '';
+  if (sortedActivePrompts.length === 0) {
     promptsCards.innerHTML = `
       <div class="empty-state">
-        <div class="empty-state-message">No prompts found</div>
+        <div class="empty-state-message">No active prompts found</div>
       </div>
     `;
-    return;
+  } else {
+    sortedActivePrompts.forEach((prompt, index) => {
+      console.log(`Creating active card ${index + 1}:`, prompt.title);
+      const card = createPromptCard(prompt);
+      promptsCards.appendChild(card);
+    });
   }
   
-  console.log('Creating cards for', prompts.length, 'prompts');
-  prompts.forEach((prompt, index) => {
-    console.log(`Creating card ${index + 1}:`, prompt.title);
-    const card = createPromptCard(prompt);
-    promptsCards.appendChild(card);
-  });
+  // Render hidden prompts
+  if (hiddenPromptsCards) {
+    hiddenPromptsCards.innerHTML = '';
+    if (hiddenPrompts.length === 0) {
+      hiddenPromptsCards.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-message">No hidden prompts</div>
+        </div>
+      `;
+    } else {
+      const sortedHiddenPrompts = sortPromptsByPriority(hiddenPrompts);
+      sortedHiddenPrompts.forEach((prompt, index) => {
+        console.log(`Creating hidden card ${index + 1}:`, prompt.title);
+        const card = createPromptCard(prompt);
+        hiddenPromptsCards.appendChild(card);
+      });
+    }
+  }
   
-  console.log('Cards rendered, total children:', promptsCards.children.length);
+  // Render deleted prompts
+  if (deletedPromptsCards) {
+    deletedPromptsCards.innerHTML = '';
+    if (deletedPrompts.length === 0) {
+      deletedPromptsCards.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-message">No deleted prompts</div>
+        </div>
+      `;
+    } else {
+      const sortedDeletedPrompts = sortPromptsByPriority(deletedPrompts);
+      sortedDeletedPrompts.forEach((prompt, index) => {
+        console.log(`Creating deleted card ${index + 1}:`, prompt.title);
+        const card = createPromptCard(prompt);
+        deletedPromptsCards.appendChild(card);
+      });
+    }
+  }
+  
+  console.log('Cards rendered - Active:', sortedActivePrompts.length, 'Hidden:', hiddenPrompts.length, 'Deleted:', deletedPrompts.length);
 }
 
 // Create prompt card element
 function createPromptCard(prompt: Prompt): HTMLElement {
   const card = document.createElement('div');
-  card.className = `prompt-card ${prompt.id === currentPrompt?.id ? 'selected' : ''}`;
+  card.className = `prompt-card ${prompt.id === currentPrompt?.id ? 'selected' : ''} ${prompt.favorite ? 'favorite' : ''}`;
   card.setAttribute('data-prompt-id', prompt.id);
   
   card.innerHTML = `
@@ -457,14 +591,41 @@ function createPromptCard(prompt: Prompt): HTMLElement {
     <div class="prompt-card-tags">
       ${prompt.tags.map(tag => `<span class="prompt-card-tag">${escapeHtml(tag)}</span>`).join('')}
     </div>
-    <div class="prompt-card-meta">
-      <span>${prompt.favorite ? '⭐' : ''} ${prompt.hidden ? '👁️' : ''}</span>
-      <span>${new Date(prompt.updatedAt).toLocaleDateString()}</span>
+    <div class="prompt-card-actions">
+      ${!prompt.hidden && !prompt.deletedAt ? 
+        `<button class="action-btn favorite-btn" title="${prompt.favorite ? 'Remove from favorites' : 'Add to favorites'}">
+          <img src="../assets/icons/fav-${prompt.favorite ? 'f' : 's'}32.png" alt="Favorite" width="16" height="16">
+        </button>` : ''
+      }
+      ${!prompt.hidden && !prompt.deletedAt ? 
+        `<button class="action-btn clone-btn" title="Clone prompt">
+          <img src="../assets/icons/clone32.png" alt="Clone" width="16" height="16">
+        </button>` : ''
+      }
+      ${!prompt.deletedAt ? 
+        `<button class="action-btn hide-btn" title="${prompt.hidden ? 'Show prompt' : 'Hide prompt'}">
+          <img src="../assets/icons/${prompt.hidden ? 'visible' : 'hide'}32.png" alt="${prompt.hidden ? 'Show' : 'Hide'}" width="16" height="16">
+        </button>` : ''
+      }
+      ${prompt.deletedAt ? 
+        `<button class="action-btn restore-btn" title="Restore prompt">
+          <img src="../assets/icons/restore32.png" alt="Restore" width="16" height="16">
+        </button>` : 
+        prompt.source === 'starter' ? '' :
+        `<button class="action-btn delete-btn" title="Delete prompt">
+          <img src="../assets/icons/delete32.png" alt="Delete" width="16" height="16">
+        </button>`
+      }
     </div>
   `;
   
-  // Add click handler
-  card.addEventListener('click', () => {
+  // Add click handler for card selection
+  card.addEventListener('click', (e) => {
+    // Don't trigger selection if clicking on action buttons
+    if ((e.target as HTMLElement).closest('.action-btn')) {
+      return;
+    }
+    
     promptSelect.value = prompt.id;
     onPromptSelectChange();
     
@@ -472,6 +633,111 @@ function createPromptCard(prompt: Prompt): HTMLElement {
     document.querySelectorAll('.prompt-card').forEach(c => c.classList.remove('selected'));
     card.classList.add('selected');
   });
+
+  // Add event listeners for action buttons (only for buttons that exist)
+  const favoriteBtn = card.querySelector('.favorite-btn') as HTMLButtonElement;
+  const cloneBtn = card.querySelector('.clone-btn') as HTMLButtonElement;
+  const hideBtn = card.querySelector('.hide-btn') as HTMLButtonElement;
+  const deleteBtn = card.querySelector('.delete-btn') as HTMLButtonElement;
+  const restoreBtn = card.querySelector('.restore-btn') as HTMLButtonElement;
+
+  // Only add favorite listener for active prompts
+  if (favoriteBtn && !prompt.hidden && !prompt.deletedAt) {
+    favoriteBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        await toggleFavorite(prompt.id);
+        await refreshPrompts();
+        // Notify sidebar to refresh
+        chrome.runtime.sendMessage({ type: "prompts:updated" });
+      } catch (error) {
+        console.error('Failed to toggle favorite:', error);
+        showToast('Failed to update favorite status', 'error');
+      }
+    });
+  }
+
+  // Only add clone listener for active prompts
+  if (cloneBtn && !prompt.hidden && !prompt.deletedAt) {
+    cloneBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        // Create a clone of the prompt
+        const clonedPrompt: Prompt = {
+          ...prompt,
+          id: crypto.randomUUID(),
+          title: `${prompt.title} (Copy)`,
+          source: 'user' as const,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          favorite: false,
+          hidden: false,
+          deletedAt: undefined
+        };
+        
+        await putPrompt(clonedPrompt);
+        await refreshPrompts();
+        showToast('Prompt cloned successfully', 'success');
+        // Notify sidebar to refresh
+        chrome.runtime.sendMessage({ type: "prompts:updated" });
+      } catch (error) {
+        console.error('Failed to clone prompt:', error);
+        showToast('Failed to clone prompt', 'error');
+      }
+    });
+  }
+
+  // Only add hide listener for non-deleted prompts
+  if (hideBtn && !prompt.deletedAt) {
+    hideBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        await toggleHidden(prompt.id);
+        await refreshPrompts();
+        // Notify sidebar to refresh
+        chrome.runtime.sendMessage({ type: "prompts:updated" });
+      } catch (error) {
+        console.error('Failed to toggle hidden status:', error);
+        showToast('Failed to update hidden status', 'error');
+      }
+    });
+  }
+
+  // Only add delete listener for non-deleted prompts
+  if (deleteBtn && !prompt.deletedAt) {
+    deleteBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (confirm(`Are you sure you want to delete "${prompt.title}"?`)) {
+        try {
+          await deletePrompt(prompt.id);
+          await refreshPrompts();
+          showToast('Prompt deleted successfully', 'success');
+          // Notify sidebar to refresh
+          chrome.runtime.sendMessage({ type: "prompts:updated" });
+        } catch (error) {
+          console.error('Failed to delete prompt:', error);
+          showToast('Failed to delete prompt', 'error');
+        }
+      }
+    });
+  }
+
+  // Only add restore listener for deleted prompts
+  if (restoreBtn && prompt.deletedAt) {
+    restoreBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        await restorePrompt(prompt.id);
+        await refreshPrompts();
+        showToast('Prompt restored successfully', 'success');
+        // Notify sidebar to refresh
+        chrome.runtime.sendMessage({ type: "prompts:updated" });
+      } catch (error) {
+        console.error('Failed to restore prompt:', error);
+        showToast('Failed to restore prompt', 'error');
+      }
+    });
+  }
   
   return card;
 }
@@ -501,6 +767,82 @@ async function exportPrompts() {
   } catch (error) {
     console.error('Export failed:', error);
     showToast('Export failed', 'error');
+  }
+}
+
+
+
+// Copy meta prompt to clipboard
+async function copyMetaPrompt() {
+  try {
+    const metaPrompt = `Take the time to think through every detail. Reason carefully so you produce the best possible prompt.
+
+You are a prompt-rewriting assistant. Your goal is to take any provided sample prompt and output a new, structured prompt in the JSON format below, following these rules:
+
+Extract key details from the sample prompt:
+
+Role and goal
+
+Inputs needed, explicit and implied
+
+Any inputs already provided
+
+Required output structure or sections
+
+Ask only the questions needed to collect missing inputs.
+
+Ask zero to five concise, targeted questions.
+
+Include a question only if the answer is not already given.
+
+Generate three appropriate tags based on topic, task type, and intended output.
+
+Tags must be relevant, descriptive, and lowercase.
+
+Avoid generic placeholders unless they truly fit.
+
+Rewrite the prompt so it clearly:
+
+States the role and goal
+
+Lists the exact questions to ask before starting, if any
+
+Lists the known inputs
+
+Lists the output sections in bullet form
+
+Generate a randomized alphanumeric string exactly 20 characters long for the id field.
+
+Output using this exact JSON template format:
+
+{
+  "schemaVersion": "1.0.0",
+  "timestamp": "[current UTC timestamp in ISO 8601 format]",
+  "prompts": [
+    {
+      "id": "[randomized 20-character alphanumeric ID]",
+      "title": "[Short descriptive title for the new prompt]",
+      "body": "[Full rewritten prompt text in the new format]",
+      "tags": ["tag1", "tag2", "tag3"],
+      "source": "user",
+      "favorite": false,
+      "hidden": false,
+      "createdAt": "[current UTC timestamp in ISO 8601 format]",
+      "updatedAt": "[current UTC timestamp in ISO 8601 format]",
+      "version": 1
+    }
+  ]
+}
+
+Keep language direct and concise. Do not add filler or commentary.
+
+Ensure the body uses the "questions first, then execute" approach before producing the output. If no questions are needed, proceed directly to execution details.`;
+    
+    await navigator.clipboard.writeText(metaPrompt);
+    showToast('Meta prompt copied to clipboard', 'success');
+  } catch (error) {
+    console.error('Failed to copy meta prompt:', error);
+    showToast('Failed to copy meta prompt', 'error');
   }
 }
 
@@ -548,8 +890,8 @@ async function mergePrompts(importedPrompts: Prompt[]) {
       // New prompt
       await putPrompt(imported);
       added++;
-    } else if (existing.source === 'seed') {
-      // Never modify seed prompts
+    } else if (existing.source === 'starter') {
+      // Never modify starter prompts
       skipped++;
     } else if (new Date(imported.updatedAt) > new Date(existing.updatedAt)) {
       // Imported is newer
@@ -563,9 +905,12 @@ async function mergePrompts(importedPrompts: Prompt[]) {
   
   showToast(`Merge completed: ${added} added, ${updated} updated, ${skipped} skipped`, 'info');
   
-  // Reload prompts
-  await loadPrompts();
-}
+      // Reload prompts
+    await loadPrompts();
+    
+    // Notify sidebar to refresh
+    chrome.runtime.sendMessage({ type: "prompts:updated" });
+  }
 
 
 
@@ -598,6 +943,21 @@ function escapeHtml(text: string): string {
   return div.innerHTML;
 }
 
+// Consistent sorting function for all prompt lists
+function sortPromptsByPriority(prompts: Prompt[]): Prompt[] {
+  return [...prompts].sort((a, b) => {
+    // First: sort by favorite status (favorites come first)
+    if (a.favorite && !b.favorite) return -1;
+    if (!a.favorite && b.favorite) return 1;
+    
+    // Within the same favorite status, sort by usage count then alphabetical
+    // Since the database already provides this order, we maintain it
+    // This ensures consistent sorting across all sections
+    return 0; // Maintain database order within each favorite group
+  });
+}
+
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', init);
+
 

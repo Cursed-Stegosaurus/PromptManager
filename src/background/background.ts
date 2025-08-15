@@ -1,240 +1,300 @@
-import { openDb, putPrompt, getMeta, putMeta } from '../lib/db.js';
+import { openDb, putPrompt, getMeta, putMeta, incrementPromptUsage } from '../lib/db.js';
 import type { Prompt } from '../lib/schema.js';
 
-// Daily purge of recycle bin
+// Daily purge of recycle bin (placeholder for future implementation)
 if (chrome.alarms) {
-  chrome.alarms.onAlarm.addListener(async (a) => {
-    if (a.name === "purge") {
-      await purgeRecycleBin();
+  chrome.alarms.onAlarm.addListener(async (alarm) => {
+    if (alarm.name === "purge-recycle-bin") {
+      try {
+        // TODO: Implement purgeRecycleBin function
+        console.log("Recycle bin purge requested (not yet implemented)");
+      } catch (error) {
+        console.error("Failed to purge recycle bin:", error);
+      }
     }
   });
-  
-  // Create daily purge alarm
-  chrome.alarms.create("purge", { periodInMinutes: 24 * 60 });
+} else {
+  console.log("Chrome alarms API not available - recycle bin auto-purge disabled");
 }
-
-// Ensure seeds are loaded when extension starts
-chrome.runtime.onStartup.addListener(async () => {
-  await ensureSeedLoaded();
-});
-
-// Handle extension installation and setup
-chrome.runtime.onInstalled.addListener(async () => {
-  await ensureSeedLoaded();
-  
-  // Create context menu for inserting prompts
-  chrome.contextMenus.create({
-    id: "insert-prompt",
-    title: "Insert Prompt",
-    contexts: ["editable"]
-  });
-});
 
 // Handle extension icon click to open sidebar
-chrome.action.onClicked.addListener(async (tab) => {
-  if (tab?.id) {
-    await chrome.sidePanel.open({ tabId: tab.id });
-  }
-});
-
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId === "insert-prompt" && tab?.id) {
-    const lastUsedId = await getMeta<string>("lastUsedPromptId");
-    if (lastUsedId) {
-      const prompt = await getPrompt(lastUsedId);
-      if (prompt) {
-        await insertIntoTab(tab.id, prompt.body);
+if (chrome.action && chrome.action.onClicked) {
+  chrome.action.onClicked.addListener(async (tab) => {
+    try {
+      console.log('Extension icon clicked, opening sidebar...');
+      if (chrome.sidePanel && chrome.sidePanel.open) {
+        await chrome.sidePanel.open({ windowId: tab.windowId });
+        console.log('Sidebar opened successfully');
+      } else {
+        console.log('SidePanel API not available');
       }
+    } catch (error) {
+      console.error('Failed to open sidebar:', error);
     }
-  }
-});
-
-// Message channel from side panel or options
-chrome.runtime.onMessage.addListener((msg, _sender, send) => {
-  (async () => {
-    if (msg.type === "insert") {
-      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      if (tab?.id) {
-        await insertIntoTab(tab.id, msg.text as string);
-        send({ ok: true });
-      }
-    } else if (msg.type === "seed:ensure") {
-      await ensureSeedLoaded();
-      send({ ok: true });
-    } else if (msg.type === "seed:reload") {
-      // Force reload seeds by clearing the seed flag
-      await putMeta("seedLoaded", false);
-      await putMeta("seedSchemaVersion", "");
-      await ensureSeedLoaded();
-      send({ ok: true });
-    }
-  })();
-  return true;
-});
-
-// Load seed prompts from packaged file on first run
-async function ensureSeedLoaded() {
-  try {
-    const seeded = await getMeta<boolean>("seedLoaded");
-    const currentSchemaVersion = await getMeta<string>("seedSchemaVersion");
-    
-    // Get seed data first
-    const url = chrome.runtime.getURL("data/seed.json");
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("Failed to load seed.json");
-    const json = await res.json() as { schemaVersion: string; prompts: Prompt[] };
-    
-    // Check if we need to reload seeds (new version or never loaded)
-    if (seeded && currentSchemaVersion === json.schemaVersion) {
-      return;
-    }
-    const db = await openDb();
-    const tx = db.transaction("prompts", "readwrite");
-    const store = tx.objectStore("prompts");
-
-    await new Promise<void>((resolve, reject) => {
-      const now = new Date().toISOString();
-      for (const p of json.prompts) {
-        const seed: Prompt = {
-          ...p,
-          source: "seed",
-          favorite: p.favorite ?? false,
-          hidden: p.hidden ?? false,
-          createdAt: p.createdAt ?? now,
-          updatedAt: p.updatedAt ?? now,
-          version: p.version ?? 1
-        };
-        store.put(seed);
-      }
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
-    });
-
-    await putMeta("seedLoaded", true);
-    await putMeta("seedSchemaVersion", json.schemaVersion);
-  } catch (e) {
-    // Non-fatal, extension still works without seeds.
-    console.error("Seed load error:", e);
-  }
+  });
+} else {
+  console.log("Chrome action API not available - extension icon click disabled");
 }
 
-// Remove items in recycle bin older than 30 days
-async function purgeRecycleBin() {
-  try {
-    const db = await openDb();
-    const t = db.transaction("prompts", "readwrite");
-    const store = t.objectStore("prompts");
-    const req = store.openCursor();
-    const now = Date.now();
-    const cutoff = now - (30 * 24 * 60 * 60 * 1000); // 30 days
+// Ensure starters are loaded when extension starts
+if (chrome.runtime && chrome.runtime.onStartup) {
+  chrome.runtime.onStartup.addListener(async () => {
+    try {
+      await ensureStarterLoaded();
+    } catch (error) {
+      console.error("Failed to ensure starters loaded on startup:", error);
+    }
+  });
+} else {
+  console.log("Chrome runtime startup API not available");
+}
 
-    await new Promise<void>((resolve, reject) => {
-      req.onsuccess = () => {
-        const cur = req.result as IDBCursorWithValue | null;
-        if (!cur) return resolve();
-        const p = cur.value as Prompt;
-        if (p.deletedAt && new Date(p.deletedAt).getTime() < cutoff) {
-          store.delete(p.id);
+if (chrome.runtime && chrome.runtime.onInstalled) {
+  chrome.runtime.onInstalled.addListener(async (details) => {
+    try {
+      if (details.reason === 'install') {
+        // Fresh installation - just load starters
+        await ensureStarterLoaded();
+      } else if (details.reason === 'update') {
+        // Extension update - check if migration is needed
+        console.log('Extension updated, checking for migration needs...');
+        const needsMigration = await checkIfMigrationNeeded();
+        if (needsMigration) {
+          console.log('Migration needed after update, executing...');
+          const { MigrationManager } = await import('../lib/migration.js');
+          const migrationManager = MigrationManager.getInstance();
+          const result = await migrationManager.migrateSeedToStarter();
+          
+          if (result.success) {
+            console.log(`Migration completed successfully after update. Migrated ${result.migratedCount} prompts.`);
+          } else {
+            console.error('Migration failed after update:', result.errors);
+          }
         }
-        cur.continue();
-      };
-      req.onerror = () => reject(req.error);
-    });
-  } catch (error) {
-    console.error("Purge error:", error);
-  }
+        await ensureStarterLoaded();
+      }
+    } catch (error) {
+      console.error("Failed to handle extension installation/update:", error);
+    }
+  });
+} else {
+  console.log("Chrome runtime installed API not available");
 }
 
-// Try to insert text into the focused element in the tab
+// Handle messages from content scripts and sidepanel
+if (chrome.runtime && chrome.runtime.onMessage) {
+  chrome.runtime.onMessage.addListener(async (msg, sender, sendResponse) => {
+    console.log('Background: Received message:', msg.type, 'from:', sender);
+    try {
+      if (msg.type === "insert") {
+        const tabId = sender.tab?.id;
+        if (tabId && chrome.scripting) {
+          await insertIntoTab(tabId, msg.text);
+          sendResponse({ success: true });
+        } else {
+          sendResponse({ success: false, error: "Scripting API not available" });
+        }
+      } else if (msg.type === "starter:ensure") {
+        console.log('Background: Processing starter:ensure message...');
+        await ensureStarterLoaded();
+        console.log('Background: starter:ensure completed');
+        sendResponse({ success: true });
+      } else if (msg.type === "starter:reload") {
+        // Force reload starters by clearing the starter flag
+        await putMeta("starterLoaded", false);
+        await putMeta("starterSchemaVersion", "");
+        await ensureStarterLoaded();
+        sendResponse({ success: true });
+      } else if (msg.type === "incrementUsage") {
+        await incrementPromptUsage(msg.promptId);
+        sendResponse({ success: true });
+      } else if (msg.type === "migration:status") {
+        const { MigrationManager } = await import('../lib/migration.js');
+        const migrationManager = MigrationManager.getInstance();
+        const status = await migrationManager.checkMigrationStatus();
+        sendResponse({ success: true, status });
+      }
+    } catch (error) {
+      console.error("Message handling error:", error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      sendResponse({ success: false, error: errorMessage });
+    }
+    return true; // Keep message channel open for async response
+  });
+} else {
+  console.log("Chrome runtime message API not available");
+}
+
+// Insert text into a tab
 async function insertIntoTab(tabId: number, text: string) {
   try {
+    if (!chrome.scripting) {
+      throw new Error("Chrome scripting API not available");
+    }
+    
     await chrome.scripting.executeScript({
       target: { tabId },
-      func: (t: string) => {
-        const ok = tryInsert(document.activeElement as HTMLElement | null, t) || tryFrames(t);
-        if (!ok) {
-          // Clipboard fallback
-          void navigator.clipboard.writeText(t);
-        }
-
-        function tryInsert(node: HTMLElement | null, val: string): boolean {
-          if (!node) return false;
-          
-          // Inputs and textareas
-          if ((node as HTMLInputElement).value !== undefined) {
-            const input = node as HTMLInputElement;
-            const start = input.selectionStart ?? input.value.length;
-            const end = input.selectionEnd ?? input.value.length;
-            input.setRangeText(val, start, end, "end");
-            input.dispatchEvent(new Event("input", { bubbles: true }));
-            return true;
-          }
-          
-          // Contenteditable
-          if (node.isContentEditable) {
-            const sel = window.getSelection();
-            if (!sel) return false;
-            sel.deleteFromDocument();
-            const textNode = document.createTextNode(val);
-            if (sel.rangeCount === 0) {
-              const r = document.createRange();
-              r.selectNodeContents(node);
-              sel.addRange(r);
-            }
-            const range = sel.getRangeAt(0);
-            range.insertNode(textNode);
-            range.setStartAfter(textNode);
-            range.setEndAfter(textNode);
-            sel.removeAllRanges();
-            sel.addRange(range);
-            return true;
-          }
-          
-          return false;
-        }
-
-        function tryFrames(val: string): boolean {
-          for (const f of Array.from(window.frames)) {
-            try {
-              const d = f.document;
-              const el = d.activeElement as HTMLElement | null;
-              if (el && tryInsert(el, val)) {
-                return true;
-              }
-            } catch {
-              // Cross-origin frame, skip
-            }
-          }
-          return false;
+      func: (textToInsert) => {
+        const activeElement = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
+        if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
+          const start = activeElement.selectionStart || 0;
+          const end = activeElement.selectionEnd || 0;
+          const value = activeElement.value;
+          activeElement.value = value.substring(0, start) + textToInsert + value.substring(end);
+          activeElement.setSelectionRange(start + textToInsert.length, start + textToInsert.length);
+          activeElement.focus();
         }
       },
       args: [text]
     });
   } catch (error) {
-    console.error("Insert failed:", error);
-    // Fallback to clipboard
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch (clipboardError) {
-      console.error("Clipboard fallback failed:", clipboardError);
-    }
+    console.error("Failed to insert text into tab:", error);
+    throw error;
   }
 }
 
-// Helper function to get prompt from database
-async function getPrompt(id: string): Promise<Prompt | undefined> {
+// Load starter prompts from packaged file on first run
+async function ensureStarterLoaded() {
   try {
+    console.log('ensureStarterLoaded: Starting...');
+    
+    // Check if migration is needed first
+    const needsMigration = await checkIfMigrationNeeded();
+    console.log('ensureStarterLoaded: Migration needed?', needsMigration);
+    
+    if (needsMigration) {
+      console.log('Migration needed, executing...');
+      const { MigrationManager } = await import('../lib/migration.js');
+      const migrationManager = MigrationManager.getInstance();
+      const result = await migrationManager.migrateSeedToStarter();
+      
+      if (result.success) {
+        console.log(`Migration completed successfully. Migrated ${result.migratedCount} prompts.`);
+      } else {
+        console.error('Migration failed:', result.errors);
+      }
+    }
+    
+    const seeded = await getMeta<boolean>("starterLoaded");
+    const currentSchemaVersion = await getMeta<string>("starterSchemaVersion");
+    console.log('ensureStarterLoaded: Current state - seeded:', seeded, 'version:', currentSchemaVersion);
+    
+    // Get starter data first
+    const url = chrome.runtime.getURL("data/starter.json");
+    console.log('ensureStarterLoaded: Loading from URL:', url);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Failed to load starter.json");
+    const json = await res.json();
+    console.log('ensureStarterLoaded: Loaded starter.json with', json.prompts.length, 'prompts');
+    
+    // Check if we need to reload starters (new version or never loaded)
+    if (seeded && currentSchemaVersion === json.schemaVersion) {
+      console.log("Starters already loaded with current version");
+      return;
+    }
+    
+    console.log("Loading starter prompts...");
     const db = await openDb();
-    const tx = db.transaction("prompts", "readonly");
+    const tx = db.transaction("prompts", "readwrite");
     const store = tx.objectStore("prompts");
-    return await new Promise<Prompt | undefined>((resolve, reject) => {
-      const req = store.get(id);
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
+    
+    // Clear existing starters first
+    let existingStarters: Prompt[] = [];
+    try {
+      // Try to use the index if it exists
+      if (store.indexNames.contains("by_source")) {
+        existingStarters = await new Promise<Prompt[]>((resolve, reject) => {
+          const req = store.index("by_source").getAll("starter");
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+      } else {
+        // Fallback: scan all prompts manually
+        console.log('Source index not found, scanning all prompts manually...');
+        existingStarters = await new Promise<Prompt[]>((resolve, reject) => {
+          const out: Prompt[] = [];
+          const req = store.openCursor();
+          req.onsuccess = () => {
+            const cur = req.result as IDBCursorWithValue | null;
+            if (!cur) return resolve(out);
+            const val = cur.value as Prompt;
+            if (val.source === 'starter') out.push(val);
+            cur.continue();
+          };
+          req.onerror = () => reject(req.error);
+        });
+      }
+    } catch (indexError) {
+      console.log('Index access failed, scanning all prompts manually...');
+      // Fallback: scan all prompts manually
+      existingStarters = await new Promise<Prompt[]>((resolve, reject) => {
+        const out: Prompt[] = [];
+        const req = store.openCursor();
+        req.onsuccess = () => {
+          const cur = req.result as IDBCursorWithValue | null;
+          if (!cur) return resolve(out);
+          const val = cur.value as Prompt;
+          if (val.source === 'starter') out.push(val);
+          cur.continue();
+        };
+        req.onerror = () => reject(req.error);
+      });
+    }
+    
+    console.log('ensureStarterLoaded: Found', existingStarters.length, 'existing starters to clear');
+    
+    for (const existing of existingStarters) {
+      store.delete(existing.id);
+    }
+    
+    // Load new starters
+    for (const promptData of json.prompts) {
+      const starter: Prompt = {
+        ...promptData,
+        source: "starter",
+        createdAt: promptData.createdAt || new Date().toISOString(),
+        updatedAt: promptData.updatedAt || new Date().toISOString()
+      };
+      store.put(starter);
+    }
+    
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
     });
+    
+    await putMeta("starterLoaded", true);
+    await putMeta("starterSchemaVersion", json.schemaVersion);
+    console.log(`Loaded ${json.prompts.length} starter prompts successfully`);
+  } catch (e) {
+    // Non-fatal, extension still works without starters.
+    console.error("Starter load error:", e);
+  }
+}
+
+// Check if migration from seed to starter is needed
+async function checkIfMigrationNeeded(): Promise<boolean> {
+  try {
+    const migrationCompleted = await getMeta<boolean>("migrationCompleted");
+    if (migrationCompleted) {
+      console.log('Migration already completed');
+      return false;
+    }
+    
+    // Check if any prompts still have 'seed' source
+    const { listPrompts } = await import('../lib/db.js');
+    const prompts = await listPrompts(true);
+    const hasSeedPrompts = prompts.some(p => (p.source as any) === 'seed');
+    
+    if (hasSeedPrompts) {
+      console.log('Found prompts with seed source, migration needed');
+      return true;
+    }
+    
+    console.log('No seed prompts found, migration not needed');
+    return false;
   } catch (error) {
-    console.error("Failed to get prompt:", error);
-    return undefined;
+    console.error('Error checking migration status:', error);
+    return false;
   }
 }

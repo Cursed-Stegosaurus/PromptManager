@@ -17,6 +17,17 @@
       <!-- Left Panel: Settings (1/3 width) -->
       <div class="settings-panel">
         <main class="options-content">
+          <!-- User Guide Link -->
+          <section class="options-section">
+            <h2>📚 User Guide</h2>
+            <div class="setting-group">
+              <p class="setting-description">
+                New to Prompt Cortex? Need help with features? Check out our comprehensive user guide.
+              </p>
+              <a href="guide.html" class="btn btn-primary" target="_blank">Open User Guide</a>
+            </div>
+          </section>
+
           <!-- Import/Export Section -->
           <section class="options-section">
             <h2>Import & Export</h2>
@@ -29,6 +40,12 @@
                 <button id="btn-import" class="btn btn-secondary">Import Prompts</button>
                 <input type="file" id="import-file" accept=".json" class="hidden" />
               </div>
+              <div class="import-export-help">
+                <button id="btn-meta-prompt" class="btn btn-outline">Copy Meta Prompt</button>
+              </div>
+              <p class="setting-description">
+                <strong>Meta Prompt:</strong> Copy instructions for ChatGPT to convert your prompts into the correct JSON format for importing. The meta prompt includes the exact JSON template structure.
+              </p>
             </div>
           </section>
 
@@ -37,16 +54,6 @@
           <!-- Advanced Settings -->
           <section class="options-section">
             <h2>Advanced Settings</h2>
-            <div class="setting-group">
-              <label class="setting-label">
-                <input type="checkbox" id="telemetry-enabled" />
-                Enable usage analytics
-              </label>
-              <p class="setting-description">
-                Help improve the extension by sharing anonymous usage data.
-              </p>
-            </div>
-            
             <div class="setting-group">
               <label for="recycle-purge-days">Auto-purge deleted prompts after:</label>
               <select id="recycle-purge-days">
@@ -61,6 +68,26 @@
               </p>
             </div>
           </section>
+
+          <!-- Usage Analytics Section -->
+          <section class="options-section">
+            <h2>Usage Analytics</h2>
+            <div class="setting-group">
+              <div class="analytics-display">
+                <div class="total-usage">
+                  <strong>Total Prompts Used:</strong> <span id="total-used">0</span>
+                </div>
+                <div class="top-prompts">
+                  <strong>Top 5 Most Used Prompts:</strong>
+                  <div id="top-prompts-list">
+                    <div class="empty-analytics">No prompts used yet</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+
         </main>
       </div>
 
@@ -106,20 +133,48 @@
         </div>
 
         <!-- Prompt Cards Section -->
-        <div class="prompts-cards-section">
-          <h3>All Prompts</h3>
-          <div class="prompts-filter">
-            <input type="text" id="prompts-search" placeholder="Search prompts..." />
-            <select id="prompts-filter-source">
-              <option value="">All Sources</option>
-              <option value="seed">Seed Only</option>
-              <option value="user">User Only</option>
-            </select>
+        <section class="options-section">
+          <h2>All Prompts</h2>
+          <div class="setting-group">
+            <div class="search-filter-row">
+              <input type="text" id="prompts-search" placeholder="Search prompts..." class="search-input">
+              <select id="prompts-filter-source" class="filter-select">
+                <option value="">All Sources</option>
+                <option value="starter">Starter Only</option>
+                <option value="user">User Only</option>
+              </select>
+            </div>
+            <div id="prompts-cards" class="prompts-cards">
+              <!-- Prompt cards will be populated here -->
+            </div>
           </div>
-          <div id="prompts-cards" class="prompts-cards">
-            <!-- Prompt cards will be populated here -->
+        </section>
+
+        <!-- Hidden Prompts Section -->
+        <section class="options-section">
+          <div class="section-toggle" id="hidden-toggle">
+            <h2>Hidden Prompts</h2>
+            <span class="toggle-icon">▼</span>
           </div>
-        </div>
+          <div class="section-content" id="hidden-content">
+            <div id="hidden-prompts-cards" class="prompts-cards">
+              <!-- Hidden prompt cards will be populated here -->
+            </div>
+          </div>
+        </section>
+
+        <!-- Deleted Prompts Section -->
+        <section class="options-section">
+          <div class="section-toggle" id="deleted-toggle">
+            <h2>Deleted Prompts</h2>
+            <span class="toggle-icon">▼</span>
+          </div>
+          <div class="section-content" id="deleted-content">
+            <div id="deleted-prompts-cards" class="prompts-cards">
+              <!-- Deleted prompt cards will be populated here -->
+            </div>
+          </div>
+        </section>
       </div>
     </div>
 

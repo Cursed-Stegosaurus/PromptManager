@@ -31,6 +31,13 @@ function copyDir(src, dest) {
 }
 copyDir("public", outdir);
 
+// Copy data files
+const dataSrc = resolve("public", "data");
+const dataDest = resolve(outdir, "data");
+if (existsSync(dataSrc)) {
+  cpSync(dataSrc, dataDest, { recursive: true });
+}
+
 // Move background.js to root if it's in a subdirectory
 const backgroundSrc = resolve(outdir, "background", "background.js");
 const backgroundDest = resolve(outdir, "background.js");

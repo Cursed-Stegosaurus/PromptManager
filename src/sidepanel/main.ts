@@ -1,4 +1,4 @@
-import { openDb, putPrompt, getPrompt, listPrompts, deletePrompt, restorePrompt, toggleFavorite, toggleHidden, putMeta, getMeta, permanentlyDeletePrompt } from '../lib/db.js';
+import { openDb, putPrompt, getPrompt, listPrompts, deletePrompt, restorePrompt, toggleFavorite, toggleHidden, putMeta, getMeta, permanentlyDeletePrompt, incrementPromptUsage } from '../lib/db.js';
 import type { Prompt } from '../lib/schema.js';
 
 // Chrome API types
@@ -7,6 +7,9 @@ declare const chrome: {
     sendMessage: (message: any) => Promise<any>;
     getURL: (path: string) => string;
     openOptionsPage: () => void;
+    onMessage: {
+      addListener: (callback: (message: any, sender: any, sendResponse: any) => void) => void;
+    };
   };
 };
 
@@ -38,33 +41,56 @@ let searchState = {
   includeBin: false
 };
 
-// Initialize
+// Initialize the sidepanel
 async function init() {
   try {
-    await ensureSeedsLoaded();
-    initSearchWorker();
-    wireEvents();
+    // Load prompts first
     await refresh();
+    
+    // Load hidden and deleted prompts immediately
+    await loadHiddenPrompts();
+    await loadBinPrompts();
+    
+    // Wire up event listeners
+    wireEvents();
+    
+    // Set up search worker
+    setupSearchWorker();
+    
+    // Load starters if needed
+    await ensureStartersLoaded();
+    
+    // Set up periodic refresh to keep sections up-to-date
+    setInterval(async () => {
+      try {
+        await loadHiddenPrompts();
+        await loadBinPrompts();
+      } catch (error) {
+        console.error('Periodic refresh failed:', error);
+      }
+    }, 5000); // Refresh every 5 seconds
+    
+    console.log('Sidepanel initialized successfully');
   } catch (error) {
-    console.error('Failed to initialize:', error);
-    showToast('Failed to initialize', 'error');
+    console.error('Failed to initialize sidepanel:', error);
+    showToast('Failed to initialize sidepanel', 'error');
   }
 }
 
-// Ensure seeds are loaded
-async function ensureSeedsLoaded() {
+// Ensure starters are loaded
+async function ensureStartersLoaded() {
   try {
-    const seeded = await getMeta<boolean>("seedLoaded");
-    if (!seeded) {
-      await chrome.runtime.sendMessage({ type: "seed:ensure" });
+    const started = await getMeta<boolean>("starterLoaded");
+    if (!started) {
+      await chrome.runtime.sendMessage({ type: "starter:ensure" });
     }
   } catch (error) {
-    console.error('Failed to check seeds:', error);
+    console.error('Failed to check starters:', error);
   }
 }
 
 // Initialize search worker
-function initSearchWorker() {
+function setupSearchWorker() {
   try {
     searchWorker = new Worker(chrome.runtime.getURL('searchWorker.js'));
     searchWorker.onmessage = (e) => {
@@ -96,6 +122,16 @@ function wireEvents() {
   saveButton.addEventListener('click', saveCurrentPrompt);
   optionsButton.addEventListener('click', openOptions);
   
+  // Listen for prompt updates from options page
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === "prompts:updated") {
+      console.log('Sidebar received prompts:updated message, refreshing...');
+      refresh();
+      loadHiddenPrompts();
+      loadBinPrompts();
+    }
+  });
+  
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
     if (e.altKey) {
@@ -126,10 +162,10 @@ function toggleSection(toggle: HTMLElement, content: HTMLElement) {
   } else {
     toggle.classList.add('expanded');
     content.classList.add('expanded');
-    // Load content if not already loaded
-    if (toggle === hiddenToggle && hiddenPromptsList.children.length === 0) {
+    // Always refresh content when expanding sections to ensure up-to-date data
+    if (toggle === hiddenToggle) {
       loadHiddenPrompts();
-    } else if (toggle === binToggle && binPromptsList.children.length === 0) {
+    } else if (toggle === binToggle) {
       loadBinPrompts();
     }
   }
@@ -172,19 +208,26 @@ async function performSearch() {
   }
 }
 
+// Consistent sorting function for all prompt lists (same as options page)
+function sortPromptsByPriority(prompts: any[]): any[] {
+  return [...prompts].sort((a, b) => {
+    // First: sort by favorite status (favorites come first)
+    if (a.favorite && !b.favorite) return -1;
+    if (!a.favorite && b.favorite) return 1;
+    
+    // Within the same favorite status, maintain database order (usage count then alphabetical)
+    // This ensures consistent sorting across all sections
+    return 0; // Maintain database order within each favorite group
+  });
+}
+
 // Basic search fallback
 function performBasicSearch(query: string): any[] {
   if (!query) {
     // Show all non-hidden, non-deleted prompts when no search query
     const filtered = prompts.filter(p => !p.hidden && !p.deletedAt);
-    // Sort with favorites first, then by updated date
-    return filtered.sort((a, b) => {
-      // Favorites come first
-      if (a.favorite && !b.favorite) return -1;
-      if (!a.favorite && b.favorite) return 1;
-      // Within the same favorite status, sort by updated date
-      return b.updatedAt.localeCompare(a.updatedAt);
-    });
+    // Sort with favorites first, then by usage count and alphabetical
+    return sortPromptsByPriority(filtered);
   }
 
   const terms = query.toLowerCase().split(/\s+/);
@@ -196,14 +239,8 @@ function performBasicSearch(query: string): any[] {
     return terms.every(term => searchableText.includes(term));
   });
 
-  // Sort with favorites first, then by updated date
-  return filtered.sort((a, b) => {
-    // Favorites come first
-    if (a.favorite && !b.favorite) return -1;
-    if (!a.favorite && b.favorite) return 1;
-    // Within the same favorite status, sort by updated date
-    return b.updatedAt.localeCompare(a.updatedAt);
-  });
+  // Sort with favorites first, then by usage count and alphabetical
+  return sortPromptsByPriority(filtered);
 }
 
 // Display search results
@@ -256,7 +293,7 @@ function createPromptElement(prompt: Prompt): HTMLElement {
            <button class="action-btn" data-action="clone" title="Clone prompt">
              <img src="../assets/icons/clone32.png" alt="Clone" class="action-icon" />
            </button>
-           ${prompt.source === 'seed' ? '' : '<button class="action-btn danger" data-action="delete" title="Delete prompt"><img src="../assets/icons/delete32.png" alt="Delete" class="action-icon" /></button>'}`
+           ${prompt.source === 'starter' ? '' : '<button class="action-btn danger" data-action="delete" title="Delete prompt"><img src="../assets/icons/delete32.png" alt="Delete" class="action-icon" /></button>'}`
         }
       </div>
     </div>
@@ -292,10 +329,10 @@ async function handlePromptAction(action: string, promptId: string) {
         await clonePrompt(promptId);
         break;
       case 'delete':
-        // Prevent deletion of seed prompts
+        // Prevent deletion of starter prompts
         const prompt = await getPrompt(promptId);
-        if (prompt?.source === 'seed') {
-          showToast('Seed prompts cannot be deleted. Use hide instead.', 'error');
+        if (prompt?.source === 'starter') {
+          showToast('Starter prompts cannot be deleted. Use hide instead.', 'error');
           return;
         }
         await deletePrompt(promptId);
@@ -308,8 +345,13 @@ async function handlePromptAction(action: string, promptId: string) {
           await permanentlyDeletePrompt(promptId);
         }
         break;
+      case 'incrementUsage':
+        await incrementPromptUsage(promptId);
+        break;
     }
     await refresh();
+    await loadHiddenPrompts();
+    await loadBinPrompts();
   } catch (error) {
     console.error('Action failed:', error);
     showToast('Action failed', 'error');
@@ -325,12 +367,12 @@ async function selectPrompt(id: string) {
   detailTitle.value = prompt.title;
   detailBody.value = prompt.body;
   
-  // Show save button only for non-seed prompts
-  saveButton.classList.toggle('visible', prompt.source !== 'seed');
+  // Show save button only for non-starter prompts
+  saveButton.classList.toggle('visible', prompt.source !== 'starter');
   
-  // Make title and textarea editable only for non-seed prompts
-  detailTitle.readOnly = prompt.source === 'seed';
-  detailBody.readOnly = prompt.source === 'seed';
+  // Make title and textarea editable only for non-starter prompts
+  detailTitle.readOnly = prompt.source === 'starter';
+  detailBody.readOnly = prompt.source === 'starter';
   
   // Store last used
   await putMeta("lastUsedPromptId", id);
@@ -352,6 +394,8 @@ async function insertCurrentPrompt() {
   
   try {
     await chrome.runtime.sendMessage({ type: "insert", text: detailBody.value });
+    // Track analytics
+    await incrementPromptUsage(currentPromptId);
     showToast('Prompt inserted');
   } catch (error) {
     console.error('Insert failed:', error);
@@ -363,6 +407,10 @@ async function insertCurrentPrompt() {
 async function copyCurrentPrompt() {
   try {
     await navigator.clipboard.writeText(detailBody.value);
+    // Track analytics if we have a current prompt
+    if (currentPromptId) {
+      await incrementPromptUsage(currentPromptId);
+    }
     showToast('Copied to clipboard');
   } catch (error) {
     console.error('Copy failed:', error);
@@ -378,8 +426,8 @@ async function saveCurrentPrompt() {
   if (!prompt) return;
   
   // Don't allow saving starter prompts
-  if (prompt.source === 'seed') {
-    showToast('Seed prompts cannot be edited', 'error');
+  if (prompt.source === 'starter') {
+    showToast('Starter prompts cannot be edited', 'error');
     return;
   }
   
@@ -408,6 +456,8 @@ async function toggleCurrentFavorite() {
   if (!currentPromptId) return;
   await toggleFavorite(currentPromptId);
   await refresh();
+  await loadHiddenPrompts();
+  await loadBinPrompts();
   showToast('Favorite updated');
 }
 
@@ -416,6 +466,8 @@ async function toggleCurrentHidden() {
   if (!currentPromptId) return;
   await toggleHidden(currentPromptId);
   await refresh();
+  await loadHiddenPrompts();
+  await loadBinPrompts();
   showToast('Visibility updated');
 }
 
@@ -431,10 +483,10 @@ async function cloneCurrentPrompt() {
 async function deleteCurrentPrompt() {
   if (!currentPromptId) return;
   
-  // Check if this is a seed prompt
+  // Check if this is a starter prompt
   const prompt = await getPrompt(currentPromptId);
-  if (prompt?.source === 'seed') {
-    showToast('Seed prompts cannot be deleted. Use hide instead.', 'error');
+  if (prompt?.source === 'starter') {
+    showToast('Starter prompts cannot be deleted. Use hide instead.', 'error');
     return;
   }
   
@@ -442,6 +494,8 @@ async function deleteCurrentPrompt() {
   
   await deletePrompt(currentPromptId);
   await refresh();
+  await loadHiddenPrompts();
+  await loadBinPrompts();
   showToast('Prompt moved to bin');
 }
 
@@ -450,6 +504,8 @@ async function restoreCurrentPrompt() {
   if (!currentPromptId) return;
   await restorePrompt(currentPromptId);
   await refresh();
+  await loadHiddenPrompts();
+  await loadBinPrompts();
   showToast('Prompt restored');
 }
 
@@ -462,7 +518,7 @@ async function clonePrompt(id: string) {
     ...prompt,
     id: crypto.randomUUID(),
     source: "user",
-    originId: prompt.source === "seed" ? prompt.id : prompt.originId,
+    originId: prompt.source === "starter" ? prompt.id : prompt.originId,
     title: prompt.title + " (copy)",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -475,9 +531,14 @@ async function clonePrompt(id: string) {
 // Load hidden prompts
 async function loadHiddenPrompts() {
   try {
+    console.log('loadHiddenPrompts: Starting...');
     // Get all prompts including hidden ones
     const allPrompts = await listPrompts(true);
+    console.log('loadHiddenPrompts: All prompts loaded:', allPrompts.length);
+    
     const hiddenPrompts = allPrompts.filter(p => p.hidden && !p.deletedAt);
+    console.log('loadHiddenPrompts: Hidden prompts found:', hiddenPrompts.length, hiddenPrompts);
+    
     hiddenPromptsList.innerHTML = '';
     
     if (hiddenPrompts.length === 0) {
@@ -493,6 +554,8 @@ async function loadHiddenPrompts() {
       const promptElement = createPromptElement(prompt);
       hiddenPromptsList.appendChild(promptElement);
     });
+    
+    console.log('loadHiddenPrompts: Hidden prompts loaded successfully');
   } catch (error) {
     console.error('Failed to load hidden prompts:', error);
   }
@@ -501,9 +564,14 @@ async function loadHiddenPrompts() {
 // Load bin prompts
 async function loadBinPrompts() {
   try {
+    console.log('loadBinPrompts: Starting...');
     // Get all prompts including deleted ones
     const allPrompts = await listPrompts(true);
+    console.log('loadBinPrompts: All prompts loaded:', allPrompts.length);
+    
     const binPrompts = allPrompts.filter(p => p.deletedAt);
+    console.log('loadBinPrompts: Deleted prompts found:', binPrompts.length, binPrompts);
+    
     binPromptsList.innerHTML = '';
     
     if (binPrompts.length === 0) {
@@ -519,6 +587,8 @@ async function loadBinPrompts() {
       const promptElement = createPromptElement(prompt);
       binPromptsList.appendChild(promptElement);
     });
+    
+    console.log('loadBinPrompts: Deleted prompts loaded successfully');
   } catch (error) {
     console.error('Failed to load bin prompts:', error);
   }
@@ -530,18 +600,21 @@ async function refresh() {
     prompts = await listPrompts(true);
     
     if (prompts.length === 0) {
-      // Try to manually trigger seed loading
+      // Try to manually trigger starter loading
       try {
-        await chrome.runtime.sendMessage({ type: "seed:ensure" });
+        await chrome.runtime.sendMessage({ type: "starter:ensure" });
         // Wait a bit and try again
         await new Promise(resolve => setTimeout(resolve, 1000));
-        prompts = await listPrompts(true);
-      } catch (seedError) {
-        console.error('Seed ensure failed:', seedError);
+      } catch (starterError) {
+        console.error('Starter ensure failed:', starterError);
       }
     }
     
     performSearch();
+    
+    // Also refresh hidden and deleted prompts to ensure consistency
+    await loadHiddenPrompts();
+    await loadBinPrompts();
   } catch (error) {
     console.error('Failed to refresh:', error);
     showToast('Failed to refresh', 'error');

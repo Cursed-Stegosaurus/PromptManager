@@ -1,0 +1,75 @@
+{
+  "schemaVersion": "1.1.0",
+  "prompts": [
+    {
+      "id": "a9B2c4D6e8F0g1H3J5KL",
+      "title": "Meeting Transcript Summary with Action Items",
+      "body": "Role and Goal: You are a meeting summarizer. Goal: extract key points and action items from a provided meeting transcript.\nBefore you start, ask only the questions needed:\n1. What is the meeting date?\n2. Who attended and what are their roles?\n3. Do you want tone or sentiment analysis?\n4. Should action items include owners and deadlines?\n\nInputs I have: Meeting transcript text\n\nOutput sections:\n- Meeting date and attendees\n- Main points\n- Decisions made\n- Action items with owners and deadlines",
+      "tags": ["meeting", "summary", "action-items"],
+      "variables": [],
+      "department": "general",
+      "favorite": false,
+      "hidden": false,
+      "source": "starter",
+      "version": 1,
+      "createdAt": "2025-08-15T16:47:30Z",
+      "updatedAt": "2025-08-15T16:47:30Z"
+    },
+    {
+      "id": "M7nP9qR1sT3uV5wX7yZ0",
+      "title": "Email Thread Summary and Next Steps",
+      "body": "Role and Goal: You are an email thread analyst. Goal: summarize the conversation and identify next steps.\nBefore you start, ask only the questions needed:\n1. Do you want tone analysis included?\n2. Should I flag urgent items separately?\n3. Do you want deadlines for each action item?\n\nInputs I have: Email thread text\n\nOutput sections:\n- Thread subject and participants\n- Summary of discussion\n- Next steps\n- Action items with owners and deadlines",
+      "tags": ["email", "summary", "next-steps"],
+      "variables": [],
+      "department": "communication",
+      "favorite": false,
+      "hidden": false,
+      "source": "starter",
+      "version": 1,
+      "createdAt": "2025-08-15T16:47:30Z",
+      "updatedAt": "2025-08-15T16:47:30Z"
+    },
+    {
+      "id": "cD3eF5gH7jK9mN1pQ3sU",
+      "title": "Email Rewrite, Professional and Friendly",
+      "body": "Role and Goal: You are an email editor. Goal: rewrite an email to sound professional, friendly, and clear.\nBefore you start, ask only the questions needed:\n1. Who is the recipient?\n2. What is the main objective?\n3. Are there any must-keep phrases?\n4. What tone do you prefer, casual, semi-formal, or formal?\n5. Target length, shorter, similar, or longer?\n\nInputs I have: Original email text\n\nOutput sections:\n- Subject line suggestion\n- Revised email\n- Key changes and rationale",
+      "tags": ["email", "editing", "tone"],
+      "variables": [],
+      "department": "communication",
+      "favorite": false,
+      "hidden": false,
+      "source": "starter",
+      "version": 1,
+      "createdAt": "2025-08-15T16:47:30Z",
+      "updatedAt": "2025-08-15T16:47:30Z"
+    },
+    {
+      "id": "tU2vW4xY6zA8bC0dE2fG",
+      "title": "Long Note to Bullet Summary",
+      "body": "Role and Goal: You are a note summarizer. Goal: condense long notes into clear bullet points for sharing.\nBefore you start, ask only the questions needed:\n1. Who is the audience?\n2. Do you want grouping by theme?\n3. Any word or bullet limit?\n\nInputs I have: Long note text\n\nOutput sections:\n- Summary bullets\n- Optional themed groups\n- Key highlights",
+      "tags": ["notes", "summary", "bullet-points"],
+      "variables": [],
+      "department": "general",
+      "favorite": false,
+      "hidden": false,
+      "source": "starter",
+      "version": 1,
+      "createdAt": "2025-08-15T16:47:30Z",
+      "updatedAt": "2025-08-15T16:47:30Z"
+    },
+    {
+      "id": "R4sT6uV8wX0yZ2aB4cDE",
+      "title": "Messy Notes to To-Do List with Deadlines",
+      "body": "Role and Goal: You are a task organizer. Goal: convert messy notes into a structured to-do list with deadlines.\nBefore you start, ask only the questions needed:\n1. Who owns each task?\n2. What are the due dates?\n3. Should I prioritize by urgency?\n\nInputs I have: Messy notes text\n\nOutput sections:\n- To-do list\n- Owners\n- Deadlines\n- Priority",
+      "tags": ["tasks", "organization", "deadlines"],
+      "variables": [],
+      "department": "project-management",
+      "favorite": false,
+      "hidden": false,
+      "source": "starter",
+      "version": 1,
+      "createdAt": "2025-08-15T16:47:30Z",
+      "updatedAt": "2025-08-15T16:47:30Z"
+    }
+  ]
+}

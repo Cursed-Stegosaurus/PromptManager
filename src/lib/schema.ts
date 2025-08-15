@@ -1,4 +1,27 @@
-export type Source = "seed" | "user" | "shared";
+export type Source = "starter" | "user" | "shared";
+
+// Migration support for backward compatibility
+export interface MigrationSupport {
+  readonly legacySourceTypes: readonly ["seed"];
+  readonly currentSourceTypes: readonly Source[];
+  
+  isLegacySource(source: string): source is "seed";
+  migrateSource(source: string): Source;
+}
+
+export const sourceMigration: MigrationSupport = {
+  legacySourceTypes: ["seed"] as const,
+  currentSourceTypes: ["starter", "user", "shared"] as const,
+  
+  isLegacySource(source: string): source is "seed" {
+    return source === "seed";
+  },
+  
+  migrateSource(source: string): Source {
+    if (this.isLegacySource(source)) return "starter";
+    return source as Source;
+  }
+};
 
 export interface Prompt {
   id: string;
@@ -19,6 +42,12 @@ export interface Prompt {
   deletedAt?: string;
 }
 
+export interface PromptUsage {
+  promptId: string;
+  usageCount: number;
+  lastUsed: string;
+}
+
 export interface LibraryState {
   schemaVersion: "1.0.0";
   prompts: Prompt[];
@@ -31,6 +60,10 @@ export interface LibraryState {
     recycleAutoPurgeDays: 30;
     encryptionEnabled?: boolean;
     saltB64?: string;
+  };
+  analytics: {
+    totalPromptsUsed: number;
+    topUsedPrompts: PromptUsage[];
   };
 }
 

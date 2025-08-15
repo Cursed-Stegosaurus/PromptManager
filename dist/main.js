@@ -1,52 +1,147 @@
 // src/lib/db.ts
 var DB_NAME = "prompt-library";
-var DB_VERSION = 1;
+var DB_VERSION = 2;
 var STORE = "prompts";
 var META = "meta";
 async function openDb() {
   return await new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
+    req.onupgradeneeded = (event) => {
+      console.log("Database upgrade needed, creating schema...");
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE)) {
+        console.log("Creating prompts store...");
         const s = db.createObjectStore(STORE, { keyPath: "id" });
-        s.createIndex("by_deletedAt", "deletedAt", { unique: false });
-        s.createIndex("by_hidden", "hidden", { unique: false });
-        s.createIndex("by_favorite", "favorite", { unique: false });
-        s.createIndex("by_source", "source", { unique: false });
+        console.log("Creating database indexes...");
+        try {
+          s.createIndex("by_deletedAt", "deletedAt", { unique: false });
+          s.createIndex("by_hidden", "hidden", { unique: false });
+          s.createIndex("by_favorite", "favorite", { unique: false });
+          s.createIndex("by_source", "source", { unique: false });
+          console.log("All indexes created successfully");
+        } catch (indexError) {
+          console.error("Error creating indexes:", indexError);
+        }
       }
       if (!db.objectStoreNames.contains(META)) {
+        console.log("Creating meta store...");
         db.createObjectStore(META, { keyPath: "key" });
       }
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      console.log("Database opened successfully");
+      resolve(req.result);
+    };
+    req.onerror = () => {
+      console.error("Database open error:", req.error);
+      reject(req.error);
+    };
   });
 }
 async function putPrompt(p) {
   const db = await openDb();
   await tx(db, STORE, "readwrite", (store) => store.put(p));
 }
+async function getPromptRaw(id) {
+  try {
+    console.log("getPromptRaw: Getting prompt with ID:", id);
+    const db = await openDb();
+    const result = await tx(db, STORE, "readonly", (store) => reqPromise(store.get(id)));
+    console.log("getPromptRaw: Result:", result);
+    return result;
+  } catch (error) {
+    console.error("getPromptRaw: Error:", error);
+    throw error;
+  }
+}
+async function listPromptsRaw(includeDeleted = false) {
+  try {
+    console.log("listPromptsRaw: Starting with includeDeleted =", includeDeleted);
+    const db = await openDb();
+    console.log("listPromptsRaw: Database opened successfully");
+    const result = await tx(db, STORE, "readonly", (store) => new Promise((resolve, reject) => {
+      const out = [];
+      const req = store.openCursor();
+      req.onsuccess = () => {
+        const cur = req.result;
+        if (!cur) {
+          console.log("listPromptsRaw: Cursor completed, total prompts found:", out.length);
+          return resolve(out);
+        }
+        const val = cur.value;
+        if (!val.deletedAt || includeDeleted)
+          out.push(val);
+        cur.continue();
+      };
+      req.onerror = () => reject(req.error);
+    }));
+    console.log("listPromptsRaw: Final result:", result.length, result);
+    const { topUsedPrompts } = await getAnalytics();
+    const sortedResult = result.sort((a, b) => {
+      const aUsage = topUsedPrompts.find((p) => p.promptId === a.id)?.usageCount || 0;
+      const bUsage = topUsedPrompts.find((p) => p.promptId === b.id)?.usageCount || 0;
+      if (aUsage !== bUsage) {
+        return bUsage - aUsage;
+      }
+      return a.title.localeCompare(b.title);
+    });
+    return sortedResult;
+  } catch (error) {
+    console.error("listPromptsRaw: Error:", error);
+    throw error;
+  }
+}
 async function getPrompt(id) {
-  const db = await openDb();
-  return await tx(db, STORE, "readonly", (store) => reqPromise(store.get(id)));
+  try {
+    const prompt = await getPromptRaw(id);
+    if (prompt && prompt.source === "seed") {
+      console.log(`Auto-migrating prompt ${id} from 'seed' to 'starter'`);
+      prompt.source = "starter";
+      await putPrompt(prompt);
+    }
+    return prompt || null;
+  } catch (error) {
+    console.error("Failed to get prompt:", error);
+    return null;
+  }
 }
 async function listPrompts(includeDeleted = false) {
-  const db = await openDb();
-  return await tx(db, STORE, "readonly", (store) => new Promise((resolve, reject) => {
-    const out = [];
-    const req = store.openCursor();
-    req.onsuccess = () => {
-      const cur = req.result;
-      if (!cur)
-        return resolve(out);
-      const val = cur.value;
-      if (!val.deletedAt || includeDeleted)
-        out.push(val);
-      cur.continue();
-    };
-    req.onerror = () => reject(req.error);
-  }));
+  try {
+    console.log("listPrompts: Starting with includeDeleted =", includeDeleted);
+    const prompts2 = await listPromptsRaw(includeDeleted);
+    console.log("listPrompts: Raw prompts from DB:", prompts2.length, prompts2);
+    let needsMigration = false;
+    const migratedPrompts = prompts2.map((prompt) => {
+      if (prompt.source === "seed") {
+        needsMigration = true;
+        return { ...prompt, source: "starter" };
+      }
+      return prompt;
+    });
+    console.log("listPrompts: Migration needed?", needsMigration);
+    console.log("listPrompts: Migrated prompts:", migratedPrompts.length, migratedPrompts);
+    if (needsMigration) {
+      console.log(`Auto-migrating ${migratedPrompts.filter((p) => p.source === "seed").length} prompts`);
+      await Promise.all(migratedPrompts.map((p) => putPrompt(p)));
+      await putMeta("migrationCompleted", true);
+      await putMeta("migrationTimestamp", (/* @__PURE__ */ new Date()).toISOString());
+      await putMeta("migrationVersion", "2.0.0");
+      console.log("Auto-migration completed and marked as complete");
+    }
+    const { topUsedPrompts } = await getAnalytics();
+    const sortedPrompts = migratedPrompts.sort((a, b) => {
+      const aUsage = topUsedPrompts.find((p) => p.promptId === a.id)?.usageCount || 0;
+      const bUsage = topUsedPrompts.find((p) => p.promptId === b.id)?.usageCount || 0;
+      if (aUsage !== bUsage) {
+        return bUsage - aUsage;
+      }
+      return a.title.localeCompare(b.title);
+    });
+    return sortedPrompts;
+  } catch (error) {
+    console.error("Failed to list prompts:", error);
+    return [];
+  }
 }
 async function putMeta(key, value) {
   const db = await openDb();
@@ -54,7 +149,10 @@ async function putMeta(key, value) {
 }
 async function getMeta(key) {
   const db = await openDb();
-  return await tx(db, META, "readonly", (store) => reqPromise(store.get(key)).then((r) => r?.value));
+  return await tx(db, META, "readonly", (store) => {
+    const req = store.get(key);
+    return reqPromise(req).then((r) => r?.value);
+  });
 }
 async function deletePrompt(id) {
   const db = await openDb();
@@ -101,6 +199,44 @@ async function permanentlyDeletePrompt(id) {
   return await tx(db, STORE, "readwrite", (store) => {
     return reqPromise(store.delete(id));
   });
+}
+async function incrementPromptUsage(promptId) {
+  try {
+    const totalUsed = await getMeta("totalPromptsUsed") ?? 0;
+    const topUsed = await getMeta("topUsedPrompts") ?? [];
+    await putMeta("totalPromptsUsed", totalUsed + 1);
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    const existingIndex = topUsed.findIndex((p) => p.promptId === promptId);
+    if (existingIndex >= 0) {
+      topUsed[existingIndex].usageCount += 1;
+      topUsed[existingIndex].lastUsed = now;
+    } else {
+      topUsed.push({ promptId, usageCount: 1, lastUsed: now });
+    }
+    topUsed.sort((a, b) => b.usageCount - a.usageCount);
+    const top5 = topUsed.slice(0, 5);
+    await putMeta("topUsedPrompts", top5);
+    return { totalUsed: totalUsed + 1, topUsed: top5 };
+  } catch (error) {
+    console.error("Failed to increment prompt usage:", error);
+    throw error;
+  }
+}
+async function getAnalytics() {
+  try {
+    const totalUsed = await getMeta("totalPromptsUsed") ?? 0;
+    const topUsed = await getMeta("topUsedPrompts") ?? [];
+    return {
+      totalPromptsUsed: totalUsed,
+      topUsedPrompts: topUsed
+    };
+  } catch (error) {
+    console.error("Failed to get analytics:", error);
+    return {
+      totalPromptsUsed: 0,
+      topUsedPrompts: []
+    };
+  }
 }
 function tx(db, name, mode, fn) {
   return new Promise((resolve, reject) => {
@@ -152,26 +288,37 @@ var searchState = {
 };
 async function init() {
   try {
-    await ensureSeedsLoaded();
-    initSearchWorker();
-    wireEvents();
     await refresh();
+    await loadHiddenPrompts();
+    await loadBinPrompts();
+    wireEvents();
+    setupSearchWorker();
+    await ensureStartersLoaded();
+    setInterval(async () => {
+      try {
+        await loadHiddenPrompts();
+        await loadBinPrompts();
+      } catch (error) {
+        console.error("Periodic refresh failed:", error);
+      }
+    }, 5e3);
+    console.log("Sidepanel initialized successfully");
   } catch (error) {
-    console.error("Failed to initialize:", error);
-    showToast("Failed to initialize", "error");
+    console.error("Failed to initialize sidepanel:", error);
+    showToast("Failed to initialize sidepanel", "error");
   }
 }
-async function ensureSeedsLoaded() {
+async function ensureStartersLoaded() {
   try {
-    const seeded = await getMeta("seedLoaded");
-    if (!seeded) {
-      await chrome.runtime.sendMessage({ type: "seed:ensure" });
+    const started = await getMeta("starterLoaded");
+    if (!started) {
+      await chrome.runtime.sendMessage({ type: "starter:ensure" });
     }
   } catch (error) {
-    console.error("Failed to check seeds:", error);
+    console.error("Failed to check starters:", error);
   }
 }
-function initSearchWorker() {
+function setupSearchWorker() {
   try {
     searchWorker = new Worker(chrome.runtime.getURL("searchWorker.js"));
     searchWorker.onmessage = (e) => {
@@ -195,6 +342,14 @@ function wireEvents() {
   copyButton.addEventListener("click", copyCurrentPrompt);
   saveButton.addEventListener("click", saveCurrentPrompt);
   optionsButton.addEventListener("click", openOptions);
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === "prompts:updated") {
+      console.log("Sidebar received prompts:updated message, refreshing...");
+      refresh();
+      loadHiddenPrompts();
+      loadBinPrompts();
+    }
+  });
   document.addEventListener("keydown", (e) => {
     if (e.altKey) {
       switch (e.key.toLowerCase()) {
@@ -222,9 +377,9 @@ function toggleSection(toggle, content) {
   } else {
     toggle.classList.add("expanded");
     content.classList.add("expanded");
-    if (toggle === hiddenToggle && hiddenPromptsList.children.length === 0) {
+    if (toggle === hiddenToggle) {
       loadHiddenPrompts();
-    } else if (toggle === binToggle && binPromptsList.children.length === 0) {
+    } else if (toggle === binToggle) {
       loadBinPrompts();
     }
   }
@@ -257,16 +412,19 @@ async function performSearch() {
     displayResults(results);
   }
 }
+function sortPromptsByPriority(prompts2) {
+  return [...prompts2].sort((a, b) => {
+    if (a.favorite && !b.favorite)
+      return -1;
+    if (!a.favorite && b.favorite)
+      return 1;
+    return 0;
+  });
+}
 function performBasicSearch(query) {
   if (!query) {
     const filtered2 = prompts.filter((p) => !p.hidden && !p.deletedAt);
-    return filtered2.sort((a, b) => {
-      if (a.favorite && !b.favorite)
-        return -1;
-      if (!a.favorite && b.favorite)
-        return 1;
-      return b.updatedAt.localeCompare(a.updatedAt);
-    });
+    return sortPromptsByPriority(filtered2);
   }
   const terms = query.toLowerCase().split(/\s+/);
   const filtered = prompts.filter((p) => {
@@ -277,13 +435,7 @@ function performBasicSearch(query) {
     const searchableText = `${p.title} ${p.tags.join(" ")} ${p.body}`.toLowerCase();
     return terms.every((term) => searchableText.includes(term));
   });
-  return filtered.sort((a, b) => {
-    if (a.favorite && !b.favorite)
-      return -1;
-    if (!a.favorite && b.favorite)
-      return 1;
-    return b.updatedAt.localeCompare(a.updatedAt);
-  });
+  return sortPromptsByPriority(filtered);
 }
 function displayResults(results) {
   promptsList.innerHTML = "";
@@ -330,7 +482,7 @@ function createPromptElement(prompt) {
            <button class="action-btn" data-action="clone" title="Clone prompt">
              <img src="../assets/icons/clone32.png" alt="Clone" class="action-icon" />
            </button>
-           ${prompt.source === "seed" ? "" : '<button class="action-btn danger" data-action="delete" title="Delete prompt"><img src="../assets/icons/delete32.png" alt="Delete" class="action-icon" /></button>'}`
+           ${prompt.source === "starter" ? "" : '<button class="action-btn danger" data-action="delete" title="Delete prompt"><img src="../assets/icons/delete32.png" alt="Delete" class="action-icon" /></button>'}`
   )}
       </div>
     </div>
@@ -360,8 +512,8 @@ async function handlePromptAction(action, promptId) {
         break;
       case "delete":
         const prompt = await getPrompt(promptId);
-        if (prompt?.source === "seed") {
-          showToast("Seed prompts cannot be deleted. Use hide instead.", "error");
+        if (prompt?.source === "starter") {
+          showToast("Starter prompts cannot be deleted. Use hide instead.", "error");
           return;
         }
         await deletePrompt(promptId);
@@ -374,8 +526,13 @@ async function handlePromptAction(action, promptId) {
           await permanentlyDeletePrompt(promptId);
         }
         break;
+      case "incrementUsage":
+        await incrementPromptUsage(promptId);
+        break;
     }
     await refresh();
+    await loadHiddenPrompts();
+    await loadBinPrompts();
   } catch (error) {
     console.error("Action failed:", error);
     showToast("Action failed", "error");
@@ -388,9 +545,9 @@ async function selectPrompt(id) {
     return;
   detailTitle.value = prompt.title;
   detailBody.value = prompt.body;
-  saveButton.classList.toggle("visible", prompt.source !== "seed");
-  detailTitle.readOnly = prompt.source === "seed";
-  detailBody.readOnly = prompt.source === "seed";
+  saveButton.classList.toggle("visible", prompt.source !== "starter");
+  detailTitle.readOnly = prompt.source === "starter";
+  detailBody.readOnly = prompt.source === "starter";
   await putMeta("lastUsedPromptId", id);
   document.querySelectorAll(".prompt-item").forEach((item) => {
     item.classList.remove("active");
@@ -405,6 +562,7 @@ async function insertCurrentPrompt() {
     return;
   try {
     await chrome.runtime.sendMessage({ type: "insert", text: detailBody.value });
+    await incrementPromptUsage(currentPromptId);
     showToast("Prompt inserted");
   } catch (error) {
     console.error("Insert failed:", error);
@@ -414,6 +572,9 @@ async function insertCurrentPrompt() {
 async function copyCurrentPrompt() {
   try {
     await navigator.clipboard.writeText(detailBody.value);
+    if (currentPromptId) {
+      await incrementPromptUsage(currentPromptId);
+    }
     showToast("Copied to clipboard");
   } catch (error) {
     console.error("Copy failed:", error);
@@ -426,8 +587,8 @@ async function saveCurrentPrompt() {
   const prompt = await getPrompt(currentPromptId);
   if (!prompt)
     return;
-  if (prompt.source === "seed") {
-    showToast("Seed prompts cannot be edited", "error");
+  if (prompt.source === "starter") {
+    showToast("Starter prompts cannot be edited", "error");
     return;
   }
   try {
@@ -454,7 +615,7 @@ async function clonePrompt(id) {
     ...prompt,
     id: crypto.randomUUID(),
     source: "user",
-    originId: prompt.source === "seed" ? prompt.id : prompt.originId,
+    originId: prompt.source === "starter" ? prompt.id : prompt.originId,
     title: prompt.title + " (copy)",
     createdAt: (/* @__PURE__ */ new Date()).toISOString(),
     updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -464,8 +625,11 @@ async function clonePrompt(id) {
 }
 async function loadHiddenPrompts() {
   try {
+    console.log("loadHiddenPrompts: Starting...");
     const allPrompts = await listPrompts(true);
+    console.log("loadHiddenPrompts: All prompts loaded:", allPrompts.length);
     const hiddenPrompts = allPrompts.filter((p) => p.hidden && !p.deletedAt);
+    console.log("loadHiddenPrompts: Hidden prompts found:", hiddenPrompts.length, hiddenPrompts);
     hiddenPromptsList.innerHTML = "";
     if (hiddenPrompts.length === 0) {
       hiddenPromptsList.innerHTML = `
@@ -479,14 +643,18 @@ async function loadHiddenPrompts() {
       const promptElement = createPromptElement(prompt);
       hiddenPromptsList.appendChild(promptElement);
     });
+    console.log("loadHiddenPrompts: Hidden prompts loaded successfully");
   } catch (error) {
     console.error("Failed to load hidden prompts:", error);
   }
 }
 async function loadBinPrompts() {
   try {
+    console.log("loadBinPrompts: Starting...");
     const allPrompts = await listPrompts(true);
+    console.log("loadBinPrompts: All prompts loaded:", allPrompts.length);
     const binPrompts = allPrompts.filter((p) => p.deletedAt);
+    console.log("loadBinPrompts: Deleted prompts found:", binPrompts.length, binPrompts);
     binPromptsList.innerHTML = "";
     if (binPrompts.length === 0) {
       binPromptsList.innerHTML = `
@@ -500,6 +668,7 @@ async function loadBinPrompts() {
       const promptElement = createPromptElement(prompt);
       binPromptsList.appendChild(promptElement);
     });
+    console.log("loadBinPrompts: Deleted prompts loaded successfully");
   } catch (error) {
     console.error("Failed to load bin prompts:", error);
   }
@@ -509,14 +678,15 @@ async function refresh() {
     prompts = await listPrompts(true);
     if (prompts.length === 0) {
       try {
-        await chrome.runtime.sendMessage({ type: "seed:ensure" });
+        await chrome.runtime.sendMessage({ type: "starter:ensure" });
         await new Promise((resolve) => setTimeout(resolve, 1e3));
-        prompts = await listPrompts(true);
-      } catch (seedError) {
-        console.error("Seed ensure failed:", seedError);
+      } catch (starterError) {
+        console.error("Starter ensure failed:", starterError);
       }
     }
     performSearch();
+    await loadHiddenPrompts();
+    await loadBinPrompts();
   } catch (error) {
     console.error("Failed to refresh:", error);
     showToast("Failed to refresh", "error");
