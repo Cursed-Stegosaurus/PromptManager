@@ -1,14 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Prompt Cortex",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Store, search, and insert reusable prompts with optional backup and encryption",
   "permissions": [
-    "storage",
     "sidePanel",
     "scripting",
     "activeTab",
-    "contextMenus",
     "clipboardWrite"
   ],
   "background": {
